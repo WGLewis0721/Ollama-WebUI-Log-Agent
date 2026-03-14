@@ -8,9 +8,9 @@
 
 | Path | When to use | Time |
 |---|---|---|
-| **[Path A — From ECR Image](#-path-a--deploy-from-ecr-image-recommended)** | New instance, image already built and pushed | ~15 min |
-| **[Path B — From ZIP Archive](#-path-b--deploy-from-zip-archive)** | Air-gapped restore, no ECR access | ~20 min |
-| **[Path C — From Scratch](#-path-c--build-from-scratch)** | Brand new instance with nothing installed | ~45 min |
+| **[Path A — From GitHub (Recommended)](#-path-a--deploy-from-github-recommended)** | Any instance with internet access to GitHub | ~30 min |
+| **[Path B — From ECR Image](#-path-b--deploy-from-ecr-image)** | New instance, image already built and pushed to ECR | ~15 min |
+| **[Path C — From ZIP Archive](#-path-c--deploy-from-zip-archive)** | Air-gapped restore, no ECR or GitHub access | ~20 min |
 
 All three paths converge at **[Final Steps](#-final-steps--configure-and-start)**.
 
@@ -25,7 +25,7 @@ Before you start, confirm you have everything:
 - [ ] A `g4dn.xlarge` EC2 instance running **Ubuntu 22.04** in `<your-vpc-id>`
 - [ ] IAM role `<your-iam-role>` attached to the instance
 - [ ] The OpenSearch VPC endpoint URL (get from your team lead or AWS console)
-- [ ] GitHub/repository access (Path C only)
+- [ ] GitHub access (Path A only — to clone this repo)
 
 ---
 
@@ -48,11 +48,109 @@ ssh -i <your-key.pem> ubuntu@<your-private-ip>
 
 ---
 
-## 🐳 Path A — Deploy from ECR Image (Recommended)
+## 🐙 Path A — Deploy from GitHub (Recommended)
 
-Use this when you have a fresh Ubuntu instance and want to pull the pre-built image from ECR.
+Use this on any Ubuntu instance that can reach GitHub. You clone the repo and build the image locally — no ECR or S3 access required.
 
-### A1 — Install Docker
+### A1 — Install Prerequisites
+
+```bash
+sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get install -y git curl unzip python3-pip
+```
+
+✅ **Done when:** All packages install without error.
+
+---
+
+### A2 — Install the NVIDIA GPU Driver
+
+> ⚠️ Do not skip this step. Without it Ollama can't see the GPU and inference will be painfully slow.
+
+```bash
+sudo add-apt-repository ppa:graphics-drivers/ppa -y
+sudo apt-get update
+sudo apt-get install -y nvidia-driver-590-open nvidia-utils-590
+sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base
+```
+
+**Verify it worked:**
+```bash
+nvidia-smi
+```
+
+✅ **Done when:** Output shows your GPU with `Driver Version: 590.x`.
+
+> ⚠️ If `nvidia-smi` fails with an error, reboot and try again:
+> ```bash
+> sudo reboot
+> # then reconnect and re-run nvidia-smi
+> ```
+
+---
+
+### A3 — Install Docker
+
+```bash
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli docker-compose-plugin docker-buildx-plugin
+
+sudo usermod -aG docker ubuntu
+newgrp docker
+
+# Wire Docker into the NVIDIA runtime so containers can see the GPU
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+**Verify:**
+```bash
+docker --version
+docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
+```
+
+✅ **Done when:** Both commands succeed and the GPU test shows your GPU.
+
+---
+
+### A4 — Clone the Repository
+
+```bash
+cd ~
+git clone https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent.git
+cd Ollama-WebUI-Log-Agent/log-analyst-agent
+```
+
+✅ **Done when:** `ls` shows `docker-compose-rag.yml` and the `agent/` directory.
+
+---
+
+### A5 — Build the Docker Image
+
+```bash
+docker compose -f docker-compose-rag.yml build
+```
+
+> ⏱️ First build takes 3–5 minutes — it downloads base images and installs Python requirements.
+
+✅ **Done when:** Build finishes with no errors.
+
+➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
+
+---
+
+## 🐳 Path B — Deploy from ECR Image
+
+Use this when you have a pre-built image in AWS ECR and want to avoid a local build.
+
+### B1 — Install Docker
 
 ```bash
 # Add Docker's repo and GPG key
@@ -75,7 +173,7 @@ newgrp docker
 
 ---
 
-### A2 — Pull the Image from ECR
+### B2 — Pull the Image from ECR
 
 ```bash
 AWS_ACCOUNT=<your-aws-account-id>
@@ -87,7 +185,7 @@ aws ecr get-login-password --region $AWS_REGION | \
   sudo docker login --username AWS --password-stdin \
   ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
-# Pull the v3 image
+# Pull the image
 sudo docker pull \
   ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:v3
 
@@ -101,23 +199,23 @@ sudo docker tag \
 
 ---
 
-### A3 — Get the Compose File and Config
+### B3 — Get the Compose File and Config
 
 ```bash
 cd ~
-git clone https://github.com/<your-username>/<your-repo>
-cd <your-repo>/log-analyst-agent
+git clone https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent.git
+cd Ollama-WebUI-Log-Agent/log-analyst-agent
 ```
 
 ➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
 
 ---
 
-## 📦 Path B — Deploy from ZIP Archive
+## 📦 Path C — Deploy from ZIP Archive
 
 Use this when ECR is unreachable or you're restoring from a saved deployment archive.
 
-### B1 — Install Docker (same as A1)
+### C1 — Install Docker
 
 ```bash
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
@@ -136,7 +234,7 @@ newgrp docker
 
 ---
 
-### B2 — Download and Extract the ZIP from S3
+### C2 — Download and Extract the ZIP from S3
 
 ```bash
 cd ~
@@ -151,7 +249,7 @@ cd log-analyst-agent
 
 ---
 
-### B3 — Load the Docker Image
+### C3 — Load the Docker Image
 
 ```bash
 # Load the pre-exported image from the archive
@@ -166,123 +264,6 @@ sudo docker load < log-analyst-agent-log-analyst-rag.tar.gz
 > ```
 
 ✅ **Done when:** `sudo docker images` shows `log-analyst-agent-log-analyst-rag`.
-
-➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
-
----
-
-## 🔧 Path C — Build from Scratch
-
-Use this only on a completely bare Ubuntu 22.04 instance. The v3 AMI (`<your-ami-id>`)
-already has Steps C1–C4 complete — if using it, jump straight to [C5](#c5--clone-the-repository).
-
----
-
-### C1 — Update the System
-
-```bash
-sudo apt-get update && sudo apt-get upgrade -y
-sudo apt-get install -y git unzip curl python3-pip awscli
-```
-
-✅ **Done when:** No errors, prompt returns.
-
----
-
-### C2 — Install the NVIDIA GPU Driver
-
-> ⚠️ Do not skip this step. Without it Ollama can't see the GPU and inference will be painfully slow.
-
-```bash
-sudo add-apt-repository ppa:graphics-drivers/ppa -y
-sudo apt-get update
-sudo apt-get install -y nvidia-driver-590-open nvidia-utils-590
-sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base
-```
-
-**Verify it worked:**
-```bash
-nvidia-smi
-```
-
-✅ **Done when:** Output shows the Tesla T4 with `15360 MiB` of memory and `Driver Version: 590.48.01`.
-
-> ⚠️ If `nvidia-smi` fails with an error, reboot and try again:
-> ```bash
-> sudo reboot
-> # then reconnect and re-run nvidia-smi
-> ```
-
----
-
-### C3 — Install Docker
-
-```bash
-# Add Docker repo
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-  sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list
-
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli docker-compose-plugin docker-buildx-plugin
-
-# Allow ubuntu user to run Docker without sudo
-sudo usermod -aG docker ubuntu
-newgrp docker
-
-# Wire Docker into the NVIDIA runtime so containers can see the GPU
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-```
-
-**Verify:**
-```bash
-docker --version
-# Expected: Docker version 29.x
-
-docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
-# Expected: Tesla T4 output
-```
-
-✅ **Done when:** Both commands succeed and the GPU test shows the Tesla T4.
-
----
-
-### C4 — Install Python Dependencies
-
-```bash
-pip3 install boto3 opensearch-py requests-aws4auth
-pip3 install fastapi uvicorn flask langchain
-```
-
-✅ **Done when:** No errors. Add `--user` if you see permission errors.
-
----
-
-### C5 — Clone the Repository
-
-```bash
-cd ~
-git clone https://github.com/<your-username>/<your-repo>
-cd <your-repo>/log-analyst-agent
-```
-
-✅ **Done when:** `ls` shows `docker-compose-rag.yml` and the `agent/` directory.
-
----
-
-### C6 — Build the Docker Image from Source
-
-```bash
-sudo docker compose -f docker-compose-rag.yml build
-```
-
-> ⏱️ First build takes 3–5 minutes — it downloads base images and installs Python requirements.
-
-✅ **Done when:** Build finishes with no errors.
 
 ➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
 
@@ -535,8 +516,8 @@ sudo docker compose -f docker-compose-rag.yml restart ollama
 ## 📦 Reference
 
 ```
-ECR image:  <your-account-id>.dkr.ecr.us-gov-west-1.amazonaws.com/log-analyst-rag:v3
-AMI:        <your-ami-id>  (v3 — drivers and Docker pre-installed, skip C1–C4)
-S3 archive: s3://<your-s3-bucket>/deployments/
-GitHub:     https://github.com/<your-username>/<your-repo>
+GitHub repo: https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent
+ECR image:   <your-account-id>.dkr.ecr.us-gov-west-1.amazonaws.com/log-analyst-rag:v3
+AMI:         <your-ami-id>  (v3 — drivers and Docker pre-installed, skip A1–A2)
+S3 archive:  s3://<your-s3-bucket>/deployments/
 ```
