@@ -1,0 +1,96 @@
+networks:
+  log-analyst-network:
+    driver: bridge
+
+volumes:
+  ollama_data:
+  open-webui-data:
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+
+  log-analyst-rag:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst-rag
+    depends_on:
+    env_file:
+    - .env.rag
+    env_file:
+      - .env.rag
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MODEL_NAME=llama3.2:3b
+      - AWS_REGION=us-gov-west-1
+    volumes:
+      - ./logs:/app/logs:ro
+      - ./output:/app/output
+      - ./config:/app/config
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+
+  dashboard:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst-dashboard
+    command: python dashboard.py
+    depends_on:
+      - log-analyst-rag
+    environment:
+      - OUTPUT_DIR=/app/output
+      - DASHBOARD_PORT=5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./output:/app/output:ro
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.open-webui
+    container_name: open-webui
+    ports:
+      - "8080:8080"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_AUTH=true
+      - WEBUI_NAME=CNAP AI Assistant
+      - AWS_REGION=us-gov-west-1
+      - OPENSEARCH_ENDPOINT=vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+      - ENABLE_TOOLS=true
+      - ENABLE_FUNCTIONS=true
+      - ENABLE_PIPELINES=true
+      - GLOBAL_TOOL_ROUTER=true
+    volumes:
+      - open-webui-data:/app/backend/data
+    restart: unless-stopped
+    networks:
+      - log-analyst-network

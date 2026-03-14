@@ -1,0 +1,9 @@
+FROM ghcr.io/open-webui/open-webui:main
+
+# Install Python packages needed for OpenSearch
+RUN pip install --no-cache-dir \
+    boto3 \
+    opensearch-py \
+    requests-aws4auth
+
+# The container will use EC2 instance metadata for credentials

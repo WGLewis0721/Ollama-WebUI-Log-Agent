@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - log-analyst-network
+
+  # Document indexer - run once or scheduled
+  indexer:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: document-indexer
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ~/.aws:/root/.aws:ro
+    environment:
+      # S3 Configuration
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_PREFIX=${S3_PREFIX:-knowledge-base/}
+      
+      # OpenSearch
+      - OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      
+      # Ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+    networks:
+      - log-analyst-network
+    command: python document_indexer.py index_all
+    profiles:
+      - tools
+
+  # RAG-enhanced log analyst
+  log-analyst-rag:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst-rag
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      - ~/.aws:/root/.aws:ro
+    environment:
+      # Ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MODEL_NAME=${MODEL_NAME:-llama3.1:8b}
+      - LOG_LEVEL=INFO
+      
+      # Analysis
+      - ANALYSIS_TYPE=${ANALYSIS_TYPE:-general}
+      - WATCH_MODE=${WATCH_MODE:-true}
+      - WATCH_INTERVAL_MINUTES=${WATCH_INTERVAL_MINUTES:-5}
+      
+      # OpenSearch
+      - OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - OPENSEARCH_INDEX=${OPENSEARCH_INDEX:-logs-*}
+      - TIME_RANGE_MINUTES=${TIME_RANGE_MINUTES:-60}
+      - APPLICATION_NAME=${APPLICATION_NAME:-}
+      - ERRORS_ONLY=${ERRORS_ONLY:-false}
+      
+      # RAG
+      - ENABLE_RAG=${ENABLE_RAG:-true}
+      - RAG_K=${RAG_K:-3}
+      
+      # Output
+      - OUTPUT_DIR=/app/output
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+    command: python -u main_rag.py
+
+  # Dashboard
+  dashboard:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst-dashboard
+    depends_on:
+      - log-analyst-rag
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./output:/app/output:ro
+    environment:
+      - OUTPUT_DIR=/app/output
+      - DASHBOARD_PORT=5000
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+    command: python dashboard.py
+
+volumes:
+  ollama_data:
+
+networks:
+  log-analyst-network:
+    driver: bridge

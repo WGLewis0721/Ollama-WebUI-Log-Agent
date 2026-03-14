@@ -1,0 +1,103 @@
+networks:
+  log-analyst-network:
+    driver: bridge
+
+services:
+
+  ollama:
+    container_name: ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              count: all
+              driver: nvidia
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    healthcheck:
+      interval: 30s
+      retries: 3
+      test: ["CMD", "ollama", "list"]
+      timeout: 10s
+    image: ollama/ollama:0.15.5
+    networks:
+      - log-analyst-network
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+
+  log-analyst-rag:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    command: python -u api_server.py
+    container_name: log-analyst-rag
+    depends_on:
+      ollama:
+        condition: service_healthy
+    env_file:
+      - .env.rag
+    networks:
+      - log-analyst-network
+    ports:
+      - "7000:7000"
+    restart: unless-stopped
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      - ~/.aws:/root/.aws:ro
+
+  dashboard:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    command: python dashboard.py
+    container_name: log-analyst-dashboard
+    depends_on:
+      - log-analyst-rag
+    environment:
+      - OUTPUT_DIR=/app/output
+      - DASHBOARD_PORT=5000
+    networks:
+      - log-analyst-network
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    volumes:
+      - ./output:/app/output:ro
+
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.open-webui
+    container_name: open-webui
+    depends_on:
+      - log-analyst-rag
+    environment:
+      # ── Route all chat through the agent API, not raw Ollama ──
+      - OPENAI_API_BASE_URL=http://log-analyst-rag:7000/v1
+      - OPENAI_API_KEY=cnap-il6-key  # Any non-empty string; required by OpenWebUI
+      # ── Disable direct Ollama connection ──
+      - OLLAMA_BASE_URL=
+      - ENABLE_OLLAMA_API=false
+      # ── UI settings ──
+      - WEBUI_AUTH=true
+      - WEBUI_NAME=CNAP AI Assistant
+      - DEFAULT_MODELS=log-analyst-rag
+      - AWS_REGION=us-gov-west-1
+    networks:
+      - log-analyst-network
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    volumes:
+      - open-webui-data:/app/backend/data
+
+volumes:
+  ollama_data:
+  open-webui-data:

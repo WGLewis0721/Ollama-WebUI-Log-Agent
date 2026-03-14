@@ -1,0 +1,22 @@
+# Systemd service file for Log Analyst Agent
+# Installation: sudo cp log-analyst.service /etc/systemd/system/
+# Enable: sudo systemctl enable log-analyst
+# Start: sudo systemctl start log-analyst
+
+[Unit]
+Description=Log Analyst Agent Service
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/ubuntu/log-analyst-agent
+ExecStart=/usr/local/bin/docker-compose up -d
+ExecStop=/usr/local/bin/docker-compose down
+ExecReload=/usr/local/bin/docker-compose restart
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target

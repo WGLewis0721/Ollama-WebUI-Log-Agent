@@ -1,0 +1,213 @@
+#!/bin/bash
+# =============================================================================
+# fix_and_redeploy.sh — CNAP Log Analyst Agent
+# Rewrites api_server.py with all fixes, rebuilds, redeploys, and tests
+# Run from: /home/ubuntu/log-analyst-agent
+# Usage:    bash fix_and_redeploy.sh
+# =============================================================================
+
+set -e
+
+AGENT_DIR="/home/ubuntu/log-analyst-agent/agent"
+COMPOSE_FILE="/home/ubuntu/log-analyst-agent/docker-compose-rag.yml"
+
+# ── 1. Backup api_server.py ───────────────────────────────────────────────────
+echo "📦 Backing up api_server.py..."
+cp "$AGENT_DIR/api_server.py" "$AGENT_DIR/api_server.py.bak.$(date +%s)"
+echo "   ✓ Backup saved"
+
+# ── 2. Write the fixed api_server.py ─────────────────────────────────────────
+echo "✍️  Writing fixed api_server.py..."
+cat > "$AGENT_DIR/api_server.py" << 'PYEOF'
+#!/usr/bin/env python3
+"""
+api_server.py — OpenAI-compatible API server for the CNAP Log Analyst Agent
+Exposes /v1/models and /v1/chat/completions for OpenWebUI integration.
+
+Fixes applied:
+- fetch_logs now uses OPENSEARCH_INDEX env var (all three index patterns)
+- time range uses TIME_RANGE_MINUTES env var instead of hardcoded 60
+- os imported for env var access
+- retrieve_rag_context wired into every chat completion
+- response includes rag_used and log_count metadata
+"""
+
+import os
+import time
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from main_rag import get_opensearch_client, fetch_logs, retrieve_rag_context, analyze_logs
+
+app = FastAPI(title="CNAP Log Analyst API", version="2.0")
+
+# Read config from env (injected by docker-compose via .env.rag)
+OPENSEARCH_INDEX   = os.getenv("OPENSEARCH_INDEX", "cwl-*,appgate-logs-*,security-logs-*")
+TIME_RANGE_MINUTES = int(os.getenv("TIME_RANGE_MINUTES", "99999"))
+MODEL_NAME         = os.getenv("MODEL_NAME", "llama3.1:8b")
+
+
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI-compatible model list endpoint — required by OpenWebUI."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "log-analyst-rag",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "cnap-devsecops",
+                "description": "IL6 RAG Log Analyst — OpenSearch + Ollama + RAG"
+            }
+        ]
+    }
+
+
+@app.post("/v1/chat/completions")
+async def chat(request: Request):
+    """
+    OpenAI-compatible chat completions endpoint.
+    Flow: extract query → fetch logs → retrieve RAG context → analyze → return.
+    """
+    body = await request.json()
+
+    # Extract the user's question from the message list
+    messages = body.get("messages", [])
+    query = messages[-1]["content"] if messages else "Analyze recent logs for threats"
+
+    print(f"\n[API] Incoming request: {query[:80]}")
+
+    # Step 1 — connect to OpenSearch
+    try:
+        client = get_opensearch_client()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"OpenSearch connection failed: {e}"})
+
+    # Step 2 — fetch logs from all configured indices
+    print(f"[API] Fetching logs from: {OPENSEARCH_INDEX} (last {TIME_RANGE_MINUTES} min)")
+    logs = fetch_logs(client, OPENSEARCH_INDEX, TIME_RANGE_MINUTES)
+
+    if not logs:
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "⚠️ No logs found in OpenSearch for the configured time range and indices.\n\n"
+                        f"**Indices searched:** `{OPENSEARCH_INDEX}`\n"
+                        f"**Time range:** last {TIME_RANGE_MINUTES} minutes\n\n"
+                        "Check that Fluent Bit is forwarding logs and that the index patterns match."
+                    )
+                }
+            }],
+            "metadata": {"log_count": 0, "rag_used": False}
+        }
+
+    print(f"[API] Fetched {len(logs)} logs")
+
+    # Step 3 — retrieve RAG context
+    print("[API] Retrieving RAG context...")
+    rag_context = retrieve_rag_context(client, logs)
+    rag_used = bool(rag_context)
+    print(f"[API] RAG context: {'retrieved' if rag_used else 'none available'}")
+
+    # Step 4 — analyze
+    print(f"[API] Sending to {MODEL_NAME} for analysis...")
+    answer = analyze_logs(logs, rag_context)
+
+    print(f"[API] Analysis complete — {len(answer)} chars")
+
+    return {
+        "object": "chat.completion",
+        "model": "log-analyst-rag",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": answer
+            },
+            "finish_reason": "stop"
+        }],
+        "metadata": {
+            "log_count": len(logs),
+            "rag_used": rag_used,
+            "indices": OPENSEARCH_INDEX,
+            "model": MODEL_NAME
+        }
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "log-analyst-rag", "model": MODEL_NAME}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=7000)
+PYEOF
+
+echo "   ✓ api_server.py written ($(wc -l < "$AGENT_DIR/api_server.py") lines)"
+
+# ── 3. Rebuild container ──────────────────────────────────────────────────────
+echo ""
+echo "🔨 Rebuilding log-analyst-rag container..."
+sudo docker compose -f "$COMPOSE_FILE" build log-analyst-rag
+
+# ── 4. Restart agent only ─────────────────────────────────────────────────────
+echo ""
+echo "🔄 Restarting log-analyst-rag..."
+sudo docker compose -f "$COMPOSE_FILE" up -d log-analyst-rag
+
+echo ""
+echo "⏳ Waiting 10s for startup..."
+sleep 10
+
+# ── 5. Confirm container is up ────────────────────────────────────────────────
+echo ""
+echo "📋 Container status:"
+sudo docker compose -f "$COMPOSE_FILE" ps
+
+# ── 6. Confirm API server is responding ───────────────────────────────────────
+echo ""
+echo "🔌 Checking /v1/models endpoint..."
+curl -s --max-time 5 http://localhost:7000/v1/models | python3 -m json.tool
+
+# ── 7. Full end-to-end test ───────────────────────────────────────────────────
+echo ""
+echo "🧪 Running end-to-end test (fetch → RAG → analyze)..."
+echo "   Model: llama3.1:8b on T4 GPU — expect 2-4 minutes"
+echo "   Watch docker logs in another terminal: sudo docker logs -f log-analyst-rag"
+echo "──────────────────────────────────────────────────────────────────"
+
+time curl -s -X POST http://localhost:7000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Analyze recent logs for security threats and anomalies"}]}' \
+  --max-time 360 \
+  | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    content = d['choices'][0]['message']['content']
+    meta    = d.get('metadata', {})
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    print(f'✅ RESPONSE RECEIVED')
+    print(f'   Log count : {meta.get(\"log_count\", \"?\")}')
+    print(f'   RAG used  : {meta.get(\"rag_used\", \"?\")}')
+    print(f'   Model     : {meta.get(\"model\", \"?\")}')
+    print(f'   Length    : {len(content)} chars')
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    print()
+    print(content[:1200])
+    print()
+    if len(content) > 1200:
+        print(f'... [{len(content)-1200} more chars] ...')
+except Exception as e:
+    print(f'❌ Failed to parse response: {e}')
+    print('Raw:', sys.stdin.read()[:500])
+"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Phase 2 functional verification complete."
+echo "Next: run phase1_discovery.sh to capture final state, then move to Phase 3 RAG validation."

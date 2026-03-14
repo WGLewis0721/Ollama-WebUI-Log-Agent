@@ -71,6 +71,7 @@ The agent fetches a representative log sample, applies runbook context from the 
 
 ---
 
+## Architecture
 ## Architecture at a Glance
 
 ```
@@ -147,6 +148,7 @@ OpenSearch  (VPC endpoint)  — Live cwl-*, appgate-logs-*, security-logs-* indi
 
 | Parameter | Value |
 |---|---|
+| Instance type | `g4dn.xlarge` — Tesla T4, 15360 MiB VRAM |
 | Instance | `g4dn.xlarge` — Tesla T4, 15360 MiB VRAM |
 | OS | Ubuntu 22.04 LTS |
 | Region | `us-gov-west-1` (AWS GovCloud West) |
@@ -183,6 +185,7 @@ ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem \
 | Dashboard | http://localhost:5000 | Browse reports and query audit trail |
 | API (Swagger) | http://localhost:7000/docs | Raw API and health check |
 
+For a fresh install or restore from the ZIP archive, see **[SETUP_GUIDE.md](./SETUP_GUIDE.md)**.
 For a fresh install, see **[SETUP.md](./SETUP.md)**.
 
 ---
@@ -215,6 +218,77 @@ cat $(ls -t ~/log-analyst-agent/output/analysis_rag_*.txt | head -1)
 ## Repository Structure
 
 ```
+Ollama-WebUI-Log-Agent/
+├── README.md                          ← You are here
+├── SETUP_GUIDE.md                     ← Step-by-step installation & configuration
+├── IMPROVEMENTS.md                    ← Optimization & enhancement suggestions
+├── log-analyst-agent-v3-*.zip         ← Source archive (v3 release)
+└── log-analyst-agent/
+    ├── docker-compose-rag.yml         ← Start here — runs the full stack
+    ├── docker-compose-opensearch.yml  ← OpenSearch-only stack
+    ├── docker-compose.yml             ← Basic local file analysis stack
+    ├── Dockerfile.open-webui          ← Custom Open WebUI image
+    ├── .env.example                   ← Copy to agent/.env.rag and fill in values
+    ├── .env.opensearch.example        ← OpenSearch config template
+    ├── Makefile                       ← Convenience targets (build/up/down/logs)
+    ├── log-analyst.service            ← systemd service definition
+    ├── log-analyst-policy-v2.json     ← IAM policy for EC2 role
+    ├── agent/
+    │   ├── Dockerfile
+    │   ├── api_server.py              ← FastAPI dual-mode router (port 7000)
+    │   ├── main_rag.py                ← RAG pipeline + /api/chat
+    │   ├── query_generator.py         ← llama3.2:3b → OpenSearch DSL
+    │   ├── opensearch_executor.py     ← Executes DSL, formats results
+    │   ├── opensearch_integration.py  ← AWS SigV4 OpenSearch client
+    │   ├── rag_module.py              ← kNN embeddings (nomic-embed-text)
+    │   ├── rag_indexer.py             ← Index docs into knowledge-base
+    │   ├── s3_document_fetcher.py     ← Fetch runbooks from S3
+    │   ├── document_indexer.py        ← Document chunking and embedding pipeline
+    │   ├── dashboard.py               ← Flask report history UI (port 5000)
+    │   ├── requirements.txt
+    │   └── templates/dashboard.html
+    ├── knowledge-base/
+    │   └── runbooks/                  ← Drop .md runbooks here, then re-index
+    ├── config/
+    └── (documentation)
+        ├── ARCHITECTURE.md            ← System architecture deep-dive
+        ├── COMPLETE_SOLUTION.md       ← Full solution overview & cost breakdown
+        ├── OPENSEARCH_INTEGRATION.md  ← OpenSearch setup guide
+        ├── OPENSEARCH_COMPLETE_GUIDE.md
+        ├── RAG_COST_EFFECTIVE_GUIDE.md
+        ├── OPTION3_DEPLOYMENT_GUIDE.md
+        ├── QUICKREF.md                ← Quick reference card
+        └── database-troubleshooting.md
+```
+
+---
+
+## 💰 Cost Summary
+
+| Component | Monthly Cost | Notes |
+|---|---|---|
+| EC2 g4dn.xlarge | ~$378 | GPU inference |
+| OpenSearch | $0 | Pre-existing cluster |
+| S3 Knowledge Base | ~$2–10 | $0.023/GB |
+| Ollama / LLMs | $0 | Self-hosted, open source |
+| **Total** | **~$380–390** | vs $700+/month for commercial alternatives |
+
+---
+
+## 📚 Key Documents
+
+| Document | Purpose |
+|---|---|
+| [SETUP_GUIDE.md](./SETUP_GUIDE.md) | Step-by-step setup: ECR deploy, ZIP restore, or scratch build |
+| [IMPROVEMENTS.md](./IMPROVEMENTS.md) | Optimization, security, and feature roadmap suggestions |
+| [log-analyst-agent/ARCHITECTURE.md](./log-analyst-agent/ARCHITECTURE.md) | Detailed system architecture diagrams |
+| [log-analyst-agent/COMPLETE_SOLUTION.md](./log-analyst-agent/COMPLETE_SOLUTION.md) | Full solution overview with cost breakdown |
+| [log-analyst-agent/QUICKREF.md](./log-analyst-agent/QUICKREF.md) | Quick reference for daily operations |
+| [log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md](./log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md) | RAG implementation cost analysis |
+| [log-analyst-agent/OPENSEARCH_COMPLETE_GUIDE.md](./log-analyst-agent/OPENSEARCH_COMPLETE_GUIDE.md) | OpenSearch integration guide |
+
+---
+
 log-analyst-agent/
 ├── docker-compose-rag.yml          ← Start here — runs the full stack
 ├── .env.example                    ← Copy to agent/.env.rag and fill in values
@@ -267,6 +341,12 @@ Do not commit real `.env` or `.env.rag` files, AWS credentials, session tokens, 
 - [ ] Stronger DSL query guardrails (cap size, validate sort fields)
 - [ ] Expanded CNAP runbook coverage in knowledge base
 - [ ] Multi-step investigation workflows
+
+---
+
+## 🛡️ Security Notes
+
+Do not commit real `.env` or `.env.rag` files, AWS credentials, session tokens, internal hostnames, VPC endpoint URLs, or raw output files from `/output`. Commit only sanitized templates: `.env.example`, `.env.opensearch.example`.
 
 ---
 

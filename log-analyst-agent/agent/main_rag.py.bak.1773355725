@@ -1,0 +1,73 @@
+import json
+import re
+from datetime import datetime
+
+def parse_security_log(log_line):
+    """Extracts structured data from Palo Alto (CSV) and AppGate (JSON) logs."""
+    # Palo Alto Traffic/Threat (Commonly CSV)
+    if any(x in log_line for x in [",TRAFFIC,", ",THREAT,"]):
+        parts = log_line.split(',')
+        return {
+            "vendor": "Palo Alto",
+            "type": parts[3] if len(parts) > 3 else "Unknown",
+            "src_ip": parts[7] if len(parts) > 7 else "N/A",
+            "dst_ip": parts[8] if len(parts) > 8 else "N/A",
+            "action": parts[14] if len(parts) > 14 else "N/A",
+            "raw": log_line[:200]
+        }
+    
+    # AppGate SDP (Commonly JSON)
+    try:
+        data = json.loads(log_line)
+        if "policyName" in data or "claims" in data:
+            return {
+                "vendor": "AppGate",
+                "type": "Access Attempt",
+                "src_ip": data.get("clientIp", "N/A"),
+                "dst_ip": data.get("resourceName", "N/A"),
+                "action": data.get("action", "N/A"),
+                "raw": log_line[:200]
+            }
+    except:
+        pass
+
+    return {"vendor": "Generic", "raw": log_line[:200]}
+
+def analyze_logs(logs, context):
+    """Correlates logs and generates a SOC-style analysis."""
+    parsed_logs = [parse_security_log(l) for l in logs]
+    
+    # Simple Correlation: Find IPs appearing in both sets
+    appgate_ips = {l['src_ip'] for l in parsed_logs if l['vendor'] == 'AppGate'}
+    palo_ips = {l['src_ip'] for l in parsed_logs if l['vendor'] == 'Palo Alto'}
+    correlated_ips = appgate_ips.intersection(palo_ips) - {"N/A"}
+
+    # Build the Prompt
+    prompt = f"""
+    SYSTEM: You are a SOC Analyst for a DoD IL6 Environment.
+    
+    CORRELATION DATA:
+    - Overlapping IPs found in both AppGate & Palo Alto: {list(correlated_ips)}
+    
+    LOG DATA SAMPLE:
+    {json.dumps(parsed_logs[:15], indent=2)}
+    
+    RUNBOOK CONTEXT:
+    {context}
+    
+    TASK:
+    Analyze the logs for lateral movement. Focus on 'Denied' AppGate attempts 
+    followed by 'Blocked' Palo Alto traffic from the same IP. 
+    Format with Markdown tables and clear 'Mitigation Steps'.
+    """
+    
+    # Note: Replace this with your actual Ollama/LLM calling logic
+    return f"ANALYSIS COMPLETE: Found {len(correlated_ips)} correlated threats. \n\n[System Logic Applied: {prompt[:200]}...]"
+
+# Placeholder functions for OpenSearch (Ensures api_server.py doesn't break)
+def get_opensearch_client():
+    return "MockClient"
+def fetch_logs(client, index, range):
+    return ["sample log 1", "sample log 2"]
+def retrieve_rag_context(client, logs):
+    return "Sample Runbook: If IP is blocked 3x, escalate to Tier 2."

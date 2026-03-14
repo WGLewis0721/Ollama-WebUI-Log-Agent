@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:0.15.5
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # Uncomment for GPU support on EC2 (g4dn, p3, etc.)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - log-analyst-network
+
+  log-analyst:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      # AWS credentials for OpenSearch access
+      - ~/.aws:/root/.aws:ro
+    environment:
+      # Ollama configuration
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MODEL_NAME=llama3.1:8b
+      - LOG_LEVEL=INFO
+      
+      # Analysis configuration
+      - ANALYSIS_TYPE=general
+      - WATCH_MODE=true
+      - WATCH_INTERVAL_MINUTES=5
+      
+      # OpenSearch configuration
+      - OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - OPENSEARCH_INDEX=test-logs-2026.02.08
+      - TIME_RANGE_MINUTES=64800
+      - APPLICATION_NAME=${APPLICATION_NAME:-}
+      - ERRORS_ONLY=${ERRORS_ONLY:-false}
+      
+      # Output directory
+      - OUTPUT_DIR=/app/output
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+    # Override command to use OpenSearch-enabled main script
+    command: python main_opensearch.py
+
+  dashboard:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst-dashboard
+    depends_on:
+      - log-analyst
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./output:/app/output
+      - ./output:/app/output:ro
+    environment:
+      - OUTPUT_DIR=/app/output
+      - DASHBOARD_PORT=5000
+    restart: unless-stopped
+    networks:
+      - log-analyst-network
+    command: python dashboard.py
+
+volumes:
+  ollama_data:
+
+networks:
+  log-analyst-network:
+    driver: bridge
