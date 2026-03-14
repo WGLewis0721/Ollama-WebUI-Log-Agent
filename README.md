@@ -163,12 +163,15 @@ OpenSearch  (VPC endpoint)  — Live cwl-*, appgate-logs-*, security-logs-* indi
 
 ## Quick Start
 
-If deploying from the v3 AMI or ECR image, the environment is pre-configured. Start the stack:
+Clone this repo and build from source — the recommended way to deploy:
 
 ```bash
-cd ~/log-analyst-agent
-sudo docker compose -f docker-compose-rag.yml up -d
-sudo docker compose -f docker-compose-rag.yml ps
+cd ~
+git clone https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent.git
+cd Ollama-WebUI-Log-Agent/log-analyst-agent
+docker compose -f docker-compose-rag.yml build
+docker compose -f docker-compose-rag.yml up -d
+docker compose -f docker-compose-rag.yml ps
 ```
 
 Access via SSH tunnel from your local machine:
@@ -187,7 +190,6 @@ ssh -i ~/.ssh/<your-key.pem> \
 | Dashboard | http://localhost:5000 | Browse reports and query audit trail |
 | API (Swagger) | http://localhost:7000/docs | Raw API and health check |
 
-For a fresh install or restore from the ZIP archive, see **[SETUP_GUIDE.md](./SETUP_GUIDE.md)**.
 For a fresh install, see **[SETUP.md](./SETUP.md)**.
 
 ---
@@ -222,7 +224,7 @@ cat $(ls -t ~/log-analyst-agent/output/analysis_rag_*.txt | head -1)
 ```
 Ollama-WebUI-Log-Agent/
 ├── README.md                          ← You are here
-├── SETUP_GUIDE.md                     ← Step-by-step installation & configuration
+├── SETUP.md                           ← Primary setup guide (deploy from GitHub, ECR, or ZIP)
 ├── IMPROVEMENTS.md                    ← Optimization & enhancement suggestions
 ├── log-analyst-agent-v3-*.zip         ← Source archive (v3 release)
 └── log-analyst-agent/
@@ -281,7 +283,7 @@ Ollama-WebUI-Log-Agent/
 
 | Document | Purpose |
 |---|---|
-| [SETUP_GUIDE.md](./SETUP_GUIDE.md) | Step-by-step setup: ECR deploy, ZIP restore, or scratch build |
+| [SETUP.md](./SETUP.md) | **Primary setup guide** — deploy from GitHub, ECR, or ZIP archive |
 | [IMPROVEMENTS.md](./IMPROVEMENTS.md) | Optimization, security, and feature roadmap suggestions |
 | [log-analyst-agent/ARCHITECTURE.md](./log-analyst-agent/ARCHITECTURE.md) | Detailed system architecture diagrams |
 | [log-analyst-agent/COMPLETE_SOLUTION.md](./log-analyst-agent/COMPLETE_SOLUTION.md) | Full solution overview with cost breakdown |
