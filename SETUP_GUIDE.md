@@ -1,462 +1,570 @@
-# Setup Guide — Log Analyst Agent v3
+# 🍳 Setup Guide — CNAP Log Analyst Agent v3
 
-This guide walks you through a full installation of the **CNAP Log Analyst Agent v3**, from a bare EC2 instance to a running Open WebUI chat interface backed by OpenSearch and RAG.
+> **What you're building:** An AI-powered SOC log analysis platform on a GPU instance in AWS GovCloud IL6.
+> By the end you'll have 4 Docker containers running, Ollama serving local LLMs on a Tesla T4, and analysts
+> querying Palo Alto firewall logs in plain English.
 
----
+**Choose your path before you start:**
 
-## Table of Contents
+| Path | When to use | Time |
+|---|---|---|
+| **[Path A — From ECR Image](#-path-a--deploy-from-ecr-image-recommended)** | New instance, image already built and pushed | ~15 min |
+| **[Path B — From ZIP Archive](#-path-b--deploy-from-zip-archive)** | Air-gapped restore, no ECR access | ~20 min |
+| **[Path C — From Scratch](#-path-c--build-from-scratch)** | Brand new instance with nothing installed | ~45 min |
 
-1. [Prerequisites](#1-prerequisites)
-2. [Infrastructure Overview](#2-infrastructure-overview)
-3. [EC2 Instance Setup](#3-ec2-instance-setup)
-4. [Clone the Repository](#4-clone-the-repository)
-5. [Configure Environment Variables](#5-configure-environment-variables)
-6. [Configure AWS Credentials (IAM Role)](#6-configure-aws-credentials-iam-role)
-7. [Build & Start the Full RAG Stack](#7-build--start-the-full-rag-stack)
-8. [Pull Required Ollama Models](#8-pull-required-ollama-models)
-9. [Index the Knowledge Base](#9-index-the-knowledge-base)
-10. [Verify All Services](#10-verify-all-services)
-11. [Access the Web Interface](#11-access-the-web-interface)
-12. [Running as a systemd Service](#12-running-as-a-systemd-service)
-13. [Basic Mode (Local Log Files)](#13-basic-mode-local-log-files)
-14. [OpenSearch-Only Mode](#14-opensearch-only-mode)
-15. [Troubleshooting](#15-troubleshooting)
+All three paths converge at **[Final Steps](#-final-steps--configure-and-start)**.
 
 ---
 
-## 1. Prerequisites
+## 🧾 What You'll Need (All Paths)
 
-### Software Requirements
+Before you start, confirm you have everything:
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Docker | 24.x+ | Container runtime |
-| Docker Compose | v2.x+ | Multi-container orchestration |
-| Git | 2.x+ | Repository cloning |
-| AWS CLI | v2.x | Credential validation |
-
-### Hardware Requirements
-
-| Tier | Instance | RAM | vCPU | Use Case |
-|------|----------|-----|------|----------|
-| Minimum | t3.large | 8 GB | 2 | Dev / testing with 3B model |
-| Recommended | t3.xlarge | 16 GB | 4 | Production with 8B model |
-| Optimal | g4dn.xlarge | 16 GB + GPU | 4 | GPU-accelerated inference |
-
-### AWS Requirements
-
-- AWS account with access to the target region (`us-gov-west-1` or equivalent)
-- An existing **AWS OpenSearch** cluster with indices matching:
-  - `cwl-*` (CloudWatch Logs via Fluent Bit)
-  - `appgate-logs-*` (AppGate logs)
-  - `security-logs-*` (security events)
-- An **S3 bucket** containing knowledge-base documents (runbooks, SOPs, incident reports)
-- An **EC2 IAM Role** attached to the instance (see [Section 6](#6-configure-aws-credentials-iam-role))
+- [ ] Access to the bastion host (`i-0fc82dadfd4532970`)
+- [ ] `IL6-Zero-Trust-Key.pem` on your local machine
+- [ ] A `g4dn.xlarge` EC2 instance running **Ubuntu 22.04** in `vpc-0b571ce44509fdf19`
+- [ ] IAM role `LogAnalystEC2Role` attached to the instance
+- [ ] The OpenSearch VPC endpoint URL (get from your team lead or AWS console)
+- [ ] GitLab access (Path C only)
 
 ---
 
-## 2. Infrastructure Overview
+## 🔗 How to Connect
 
-```
-Internet / VPN
-     │
-     ▼
-EC2 Instance (Ubuntu 22.04 LTS)
-  ├── Port 8080  → Open WebUI (chat interface)
-  ├── Port 5000  → SOC Dashboard (Flask)
-  ├── Port 7000  → Log Analyst API (FastAPI, internal)
-  └── Port 11434 → Ollama (LLM inference, internal only)
+The log analyst host has no public IP. You must always go through the bastion.
+
+**On your local machine — connect to the bastion:**
+```bash
+ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem ec2-user@<bastion-public-ip>
 ```
 
-> **Security Note**: Ports 7000 and 11434 should be restricted to the EC2 Security Group only (no public access). Only ports 8080 and 5000 need to be reachable by end users.
+**On the bastion — hop to the log analyst host:**
+```bash
+ssh -i IL6-Zero-Trust-Key.pem ubuntu@10.40.0.90
+```
+
+> 💡 Open two terminal tabs before you start — one on the bastion for AWS CLI commands,
+> one on the log analyst host for everything else.
 
 ---
 
-## 3. EC2 Instance Setup
+## 🐳 Path A — Deploy from ECR Image (Recommended)
+
+Use this when you have a fresh Ubuntu instance and want to pull the pre-built image from ECR.
+
+### A1 — Install Docker
 
 ```bash
-# SSH into your EC2 instance
-ssh -i your-key.pem ubuntu@<your-ec2-public-ip>
+# Add Docker's repo and GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
-# Update the system
-sudo apt-get update && sudo apt-get upgrade -y
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list
 
-# Install Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli docker-compose-plugin
+
+# Let the ubuntu user run Docker without sudo
 sudo usermod -aG docker ubuntu
-newgrp docker   # Reload group without logout
-
-# Verify Docker
-docker --version
-docker compose version
-
-# (GPU instances only) Install NVIDIA Container Toolkit
-distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
-curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | \
-    sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo systemctl restart docker
+newgrp docker
 ```
+
+✅ **Done when:** `docker --version` returns without error.
 
 ---
 
-## 4. Clone the Repository
+### A2 — Pull the Image from ECR
 
 ```bash
+AWS_ACCOUNT=235856440647
+AWS_REGION=us-gov-west-1
+ECR_REPO=cnap-log-analyst-rag
+
+# Log in to ECR
+aws ecr get-login-password --region $AWS_REGION | \
+  sudo docker login --username AWS --password-stdin \
+  ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+# Pull the v3 image
+sudo docker pull \
+  ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:v3
+
+# Tag it so docker-compose can find it by the expected name
+sudo docker tag \
+  ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:v3 \
+  log-analyst-agent-log-analyst-rag:latest
+```
+
+✅ **Done when:** `sudo docker images` shows `log-analyst-agent-log-analyst-rag`.
+
+---
+
+### A3 — Get the Compose File and Config
+
+```bash
+cd ~
 git clone https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent.git
 cd Ollama-WebUI-Log-Agent/log-analyst-agent
 ```
 
+➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
+
 ---
 
-## 5. Configure Environment Variables
+## 📦 Path B — Deploy from ZIP Archive
 
-### Copy the template
+Use this when ECR is unreachable or you're restoring from a saved deployment archive.
 
-```bash
-cp .env.example .env.rag
-```
-
-### Edit `.env.rag` with your values
+### B1 — Install Docker (same as A1)
 
 ```bash
-nano .env.rag
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli docker-compose-plugin
+
+sudo usermod -aG docker ubuntu
+newgrp docker
 ```
 
-```dotenv
-# ── OpenSearch ──────────────────────────────────────────────────────────────
-OPENSEARCH_ENDPOINT=<your-opensearch-domain>.us-gov-west-1.es.amazonaws.com
+---
+
+### B2 — Download and Extract the ZIP from S3
+
+```bash
+cd ~
+aws s3 cp \
+  s3://cnap-dev-il6-ollama-knowledge-base-wgl/deployments/log-analyst-agent-v3-20260313-003705.zip \
+  ./log-analyst-agent-v3.zip \
+  --region us-gov-west-1
+
+unzip log-analyst-agent-v3.zip
+cd log-analyst-agent
+```
+
+---
+
+### B3 — Load the Docker Image
+
+```bash
+# Load the pre-exported image from the archive
+sudo docker load < log-analyst-agent-log-analyst-rag.tar.gz
+```
+
+> ⚠️ If the tar is not included in the ZIP, pull it from S3 directly:
+> ```bash
+> aws s3 cp \
+>   s3://cnap-dev-il6-ollama-knowledge-base-wgl/ecr-transfer/log-analyst-rag-v3.tar.gz \
+>   - | gunzip | sudo docker load
+> ```
+
+✅ **Done when:** `sudo docker images` shows `log-analyst-agent-log-analyst-rag`.
+
+➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
+
+---
+
+## 🔧 Path C — Build from Scratch
+
+Use this only on a completely bare Ubuntu 22.04 instance. The v3 AMI (`ami-0a6d2fcf26f229fe1`)
+already has Steps C1–C4 complete — if using it, jump straight to [C5](#c5--clone-the-repository).
+
+---
+
+### C1 — Update the System
+
+```bash
+sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get install -y git unzip curl python3-pip awscli
+```
+
+✅ **Done when:** No errors, prompt returns.
+
+---
+
+### C2 — Install the NVIDIA GPU Driver
+
+> ⚠️ Do not skip this step. Without it Ollama can't see the GPU and inference will be painfully slow.
+
+```bash
+sudo add-apt-repository ppa:graphics-drivers/ppa -y
+sudo apt-get update
+sudo apt-get install -y nvidia-driver-590-open nvidia-utils-590
+sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base
+```
+
+**Verify it worked:**
+```bash
+nvidia-smi
+```
+
+✅ **Done when:** Output shows the Tesla T4 with `15360 MiB` of memory and `Driver Version: 590.48.01`.
+
+> ⚠️ If `nvidia-smi` fails with an error, reboot and try again:
+> ```bash
+> sudo reboot
+> # then reconnect and re-run nvidia-smi
+> ```
+
+---
+
+### C3 — Install Docker
+
+```bash
+# Add Docker repo
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli docker-compose-plugin docker-buildx-plugin
+
+# Allow ubuntu user to run Docker without sudo
+sudo usermod -aG docker ubuntu
+newgrp docker
+
+# Wire Docker into the NVIDIA runtime so containers can see the GPU
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+**Verify:**
+```bash
+docker --version
+# Expected: Docker version 29.x
+
+docker run --rm --gpus all nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
+# Expected: Tesla T4 output
+```
+
+✅ **Done when:** Both commands succeed and the GPU test shows the Tesla T4.
+
+---
+
+### C4 — Install Python Dependencies
+
+```bash
+pip3 install boto3 opensearch-py requests-aws4auth
+pip3 install fastapi uvicorn flask langchain
+```
+
+✅ **Done when:** No errors. Add `--user` if you see permission errors.
+
+---
+
+### C5 — Clone the Repository
+
+```bash
+cd ~
+git clone https://github.com/WGLewis0721/Ollama-WebUI-Log-Agent.git
+cd Ollama-WebUI-Log-Agent/log-analyst-agent
+```
+
+✅ **Done when:** `ls` shows `docker-compose-rag.yml` and the `agent/` directory.
+
+---
+
+### C6 — Build the Docker Image from Source
+
+```bash
+sudo docker compose -f docker-compose-rag.yml build
+```
+
+> ⏱️ First build takes 3–5 minutes — it downloads base images and installs Python requirements.
+
+✅ **Done when:** Build finishes with no errors.
+
+➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
+
+---
+
+## ✅ Final Steps — Configure and Start
+
+Everyone arrives here. Four steps to go.
+
+---
+
+### Step 1 — Configure the Environment File
+
+```bash
+# Make sure you're in the project root
+pwd
+# Should show: .../log-analyst-agent
+
+cp .env.opensearch.example agent/.env.rag
+nano agent/.env.rag
+```
+
+Fill in the file — lines marked `← REQUIRED` must be updated:
+
+```env
+# ← REQUIRED: get from your team lead or AWS console — no https://, no trailing slash
+OPENSEARCH_ENDPOINT=<vpc-endpoint>.us-gov-west-1.es.amazonaws.com
+
+# Leave these as-is
 OPENSEARCH_INDEX=cwl-*,appgate-logs-*,security-logs-*
 AWS_REGION=us-gov-west-1
-
-# ── Ollama (LLM) ─────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL=http://ollama:11434
-MODEL_NAME=llama3.1:8b          # Main analysis model
-QUERY_MODEL=llama3.2:3b         # Query generation model (faster)
-
-# ── RAG Configuration ────────────────────────────────────────────────────────
+MODEL_NAME=llama3.1:8b
+QUERY_MODEL=llama3.2:3b
 ENABLE_RAG=true
-RAG_K=3                         # Number of RAG documents to retrieve
-RAG_INDEX=knowledge-base        # OpenSearch index for RAG documents
-S3_KNOWLEDGE_BASE_BUCKET=<your-s3-bucket-name>
+RAG_K=3
+RAG_INDEX=knowledge-base
 
-# ── Analysis Settings ────────────────────────────────────────────────────────
-TIME_RANGE_MINUTES=64800        # How far back to fetch logs (~45 days)
-WATCH_MODE=true                 # Enable continuous background analysis
-WATCH_INTERVAL_MINUTES=30       # Re-analyze every N minutes
+# ← REQUIRED: your S3 knowledge base bucket
+S3_KNOWLEDGE_BASE_BUCKET=cnap-dev-il6-ollama-knowledge-base-wgl
 
-# ── Output ───────────────────────────────────────────────────────────────────
+# Set high so historical logs are not filtered out by time
+TIME_RANGE_MINUTES=99999
+
+# Leave as-is
 OUTPUT_DIR=/app/output
 ```
 
-> ⚠️ **Never commit `.env.rag` with real credentials**. It is listed in `.gitignore`.
+Save and exit: `Ctrl+X` → `Y` → `Enter`
+
+**Confirm no placeholders remain:**
+```bash
+grep '<' agent/.env.rag
+# Should return nothing
+```
+
+✅ **Done when:** No angle-bracket placeholders remain in the file.
 
 ---
 
-## 6. Configure AWS Credentials (IAM Role)
-
-The agent uses the **EC2 instance's IAM role** for authentication. No static credentials are needed.
-
-### Create and attach an IAM Role
-
-1. Go to **IAM → Roles → Create Role**
-2. Select **EC2** as the trusted entity
-3. Attach a custom inline policy using `log-analyst-policy-v2.json`:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["es:ESHttpGet", "es:ESHttpPost", "es:ESHttpPut"],
-      "Resource": "arn:aws-us-gov:es:us-gov-west-1:<account-id>:domain/<domain-name>/*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:ListBucket"],
-      "Resource": [
-        "arn:aws-us-gov:s3:::<your-knowledge-base-bucket>",
-        "arn:aws-us-gov:s3:::<your-knowledge-base-bucket>/*"
-      ]
-    }
-  ]
-}
-```
-
-4. Attach the role to your EC2 instance: **EC2 → Instance → Actions → Security → Modify IAM Role**
-
-### Verify credentials are available
+### Step 2 — Start the Stack
 
 ```bash
-# From the EC2 instance (no AWS CLI config needed with an instance role)
-curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
-# Should return your role name
+sudo docker compose -f docker-compose-rag.yml up -d
 ```
+
+**Check that all four containers are running:**
+```bash
+sudo docker compose -f docker-compose-rag.yml ps
+```
+
+✅ **Done when:**
+
+```
+NAME                        STATUS
+ollama                      Up (healthy)
+log-analyst-rag             Up
+log-analyst-dashboard       Up
+open-webui                  Up (healthy)
+```
+
+> ⚠️ If a container shows `Exited`, check its logs before going further:
+> ```bash
+> sudo docker logs <container-name> --tail 30
+> ```
 
 ---
 
-## 7. Build & Start the Full RAG Stack
+### Step 3 — Pull the AI Models
+
+Ollama is running but empty. Pull all three models now:
 
 ```bash
-cd /path/to/Ollama-WebUI-Log-Agent/log-analyst-agent
+# Large reasoning model — ~5GB — go get a coffee
+sudo docker exec ollama ollama pull llama3.1:8b
 
-# Build and start all services (Ollama + Agent + Dashboard + Open WebUI)
-docker compose -f docker-compose-rag.yml up -d --build
+# Small query generation model — ~2GB
+sudo docker exec ollama ollama pull llama3.2:3b
 
-# Follow startup logs
-docker compose -f docker-compose-rag.yml logs -f
+# Embedding model for RAG — ~270MB, fast
+sudo docker exec ollama ollama pull nomic-embed-text
 ```
 
-Expected service startup order:
-1. `ollama` — starts and becomes healthy (model list responds)
-2. `log-analyst-rag` — FastAPI server starts on port 7000
-3. `dashboard` — Flask server starts on port 5000
-4. `open-webui` — Web UI starts on port 8080
+> You can watch GPU memory fill up in another terminal while models load:
+> ```bash
+> watch -n 2 nvidia-smi
+> ```
 
-### Check service status
-
+**Confirm all three are present:**
 ```bash
-docker compose -f docker-compose-rag.yml ps
+sudo docker exec ollama ollama list
 ```
 
-All services should show **Up** or **Up (healthy)**.
-
----
-
-## 8. Pull Required Ollama Models
-
-```bash
-# Pull the main analysis model
-docker exec ollama ollama pull llama3.1:8b
-
-# Pull the query generation model
-docker exec ollama ollama pull llama3.2:3b
-
-# Pull the embedding model (required for RAG)
-docker exec ollama ollama pull nomic-embed-text
-
-# Verify models are available
-docker exec ollama ollama list
-```
-
-Expected output:
-```
-NAME                    ID            SIZE   MODIFIED
-llama3.1:8b             ...           4.7 GB  ...
-llama3.2:3b             ...           2.0 GB  ...
-nomic-embed-text:latest ...           274 MB  ...
-```
-
-> First pulls may take 5–20 minutes depending on network speed.
-
----
-
-## 9. Index the Knowledge Base
-
-The knowledge base powers RAG context for the agent. It reads documents from your S3 bucket and creates vector embeddings in OpenSearch.
-
-```bash
-# Run the RAG indexer (one-time setup, re-run when docs change)
-docker exec log-analyst-rag python rag_indexer.py
-
-# Alternatively, to fetch from S3 and index:
-docker exec log-analyst-rag python document_indexer.py
-```
-
-### Adding documents to the knowledge base
-
-Place your documents in the S3 bucket configured by `S3_KNOWLEDGE_BASE_BUCKET`:
+✅ **Done when:**
 
 ```
-s3://<bucket>/
-├── runbooks/
-│   ├── incident-response.md
-│   └── escalation-procedures.md
-├── standards/
-│   └── security-baseline.md
-└── documentation/
-    └── network-topology.md
-```
-
-You can also add documents locally to `knowledge-base/` and they will be picked up by the indexer.
-
----
-
-## 10. Verify All Services
-
-```bash
-# Check Ollama API
-curl http://localhost:11434/api/tags
-
-# Check the Log Analyst API health
-curl http://localhost:7000/health
-# Expected: {"status": "ok"}
-
-# Check available models via the OpenAI-compatible endpoint
-curl http://localhost:7000/v1/models
-# Expected: {"data": [{"id": "log-analyst-rag", ...}]}
-
-# Check Dashboard
-curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/
-# Expected: 200
-
-# Check Open WebUI
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/
-# Expected: 200
+NAME                    SIZE
+llama3.1:8b             4.7 GB
+llama3.2:3b             2.0 GB
+nomic-embed-text        274 MB
 ```
 
 ---
 
-## 11. Access the Web Interface
+### Step 4 — Smoke Test
 
-Open a browser and navigate to:
+Three quick checks to confirm every layer is working.
 
-| Interface | URL | Purpose |
-|-----------|-----|---------|
-| **Open WebUI** | `http://<ec2-ip>:8080` | Main chat interface |
-| **SOC Dashboard** | `http://<ec2-ip>:5000` | Real-time analysis dashboard |
-| **API Docs** | `http://<ec2-ip>:7000/docs` | FastAPI auto-docs |
+**Agent API:**
+```bash
+curl -s -X POST http://localhost:7000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "what are the top source IPs in the firewall logs?"}]}' \
+  | python3 -m json.tool | head -20
+```
 
-### First-time Open WebUI setup
+**Dashboard:**
+```bash
+curl -s http://localhost:5000 | grep -o "<title>.*</title>"
+```
 
-1. Navigate to `http://<ec2-ip>:8080`
-2. Create an admin account (first user becomes admin)
-3. Select the model **`log-analyst-rag`** from the model picker
-4. Start chatting — example queries:
-   - "Show me the top source IPs from the last 24 hours"
-   - "Were there any denied connections to port 443?"
-   - "Summarize security events from this week"
-   - "Generate a SOC report for today"
+**OpenWebUI:**
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080
+# Should print: 200
+```
+
+✅ **Done when:** The API returns JSON with `"mode": "query"` and real IP addresses, the dashboard returns its title, and OpenWebUI returns `200`.
 
 ---
 
-## 12. Running as a systemd Service
+## 🎉 You're Up
 
-To ensure the stack starts automatically on boot:
-
-```bash
-sudo cp log-analyst-agent/log-analyst.service /etc/systemd/system/log-analyst.service
-
-# Edit the service file to point to your project directory
-sudo nano /etc/systemd/system/log-analyst.service
-
-sudo systemctl daemon-reload
-sudo systemctl enable log-analyst
-sudo systemctl start log-analyst
-sudo systemctl status log-analyst
-```
-
----
-
-## 13. Basic Mode (Local Log Files)
-
-If you don't have OpenSearch, you can analyze local `.log` files:
+Open a tunnel from your **local machine** to access the interfaces in your browser:
 
 ```bash
-cd log-analyst-agent
-
-# Place log files in the logs/ directory
-cp /path/to/your/app.log logs/
-
-# Start basic analysis
-docker compose -f docker-compose.yml up
-
-# Results saved to output/
-ls output/
+# Run this on YOUR LOCAL MACHINE
+ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem \
+  -L 8080:10.40.0.90:8080 \
+  -L 5000:10.40.0.90:5000 \
+  -L 7000:10.40.0.90:7000 \
+  ec2-user@<bastion-public-ip> \
+  -N
 ```
 
-### Configuration for basic mode
+| Interface | URL | What to do here |
+|---|---|---|
+| **OpenWebUI** | http://localhost:8080 | Ask questions about the logs |
+| **Dashboard** | http://localhost:5000 | Browse reports, view raw queries |
+| **API Docs** | http://localhost:7000/docs | Swagger UI and health check |
 
-Edit `docker-compose.yml`:
-
-```yaml
-environment:
-  - MODEL_NAME=llama3.2:3b      # Model to use
-  - ANALYSIS_TYPE=security       # general | security | performance | errors
-  - WATCH_MODE=false             # true for continuous monitoring
+**Try your first question in OpenWebUI:**
+```
+What are the top 5 source IPs by connection count?
 ```
 
 ---
 
-## 14. OpenSearch-Only Mode
+## 🔧 Troubleshooting
 
-For OpenSearch integration without RAG:
+### A container won't start or keeps restarting
 
 ```bash
-cp .env.opensearch.example .env.opensearch
-# Edit with your OpenSearch credentials
+sudo docker logs <container-name> --tail 50
+```
 
-docker compose -f docker-compose-opensearch.yml up -d
+Most common cause: a wrong or missing value in `agent/.env.rag`. Make sure the OpenSearch endpoint has no `https://` prefix and no trailing slash.
+
+---
+
+### OpenSearch returns 403 or connection refused
+
+Your IAM credentials may have rotated. Refresh them and restart:
+
+```bash
+ROLE=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+CREDS=$(curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
+export AWS_ACCESS_KEY_ID=$(echo $CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['AccessKeyId'])")
+export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['SecretAccessKey'])")
+export AWS_SESSION_TOKEN=$(echo $CREDS | python3 -c "import sys,json; print(json.load(sys.stdin)['Token'])")
+export AWS_DEFAULT_REGION=us-gov-west-1
+
+sudo docker compose -f docker-compose-rag.yml restart log-analyst-rag
 ```
 
 ---
 
-## 15. Troubleshooting
+### Model returns empty or garbled results
 
-### Ollama takes too long to start
-
-```bash
-# Watch Ollama health check
-docker logs ollama -f
-
-# Manually test the Ollama API
-docker exec ollama curl http://localhost:11434/api/tags
-```
-
-### Agent can't connect to OpenSearch
+Make sure all three models finished pulling and the agent had time to initialize:
 
 ```bash
-# Test from inside the container
-docker exec log-analyst-rag python -c "
-import os, requests
-endpoint = os.environ['OPENSEARCH_ENDPOINT']
-print(requests.get(f'https://{endpoint}/_cluster/health').json())
-"
+sudo docker exec ollama ollama list
+sudo docker logs log-analyst-rag --tail 20
 ```
 
-Common causes:
-- EC2 Security Group does not allow outbound to OpenSearch's VPC endpoint
-- IAM role lacks `es:ESHttpGet` permission
-- Wrong `OPENSEARCH_ENDPOINT` value (do not include `https://`)
+If models are present but results are still wrong:
+```bash
+sudo docker compose -f docker-compose-rag.yml restart log-analyst-rag
+```
+
+---
+
+### Code changes aren't taking effect after a rebuild
+
+Python caches compiled bytecode inside the container. Clear it:
+
+```bash
+sudo docker exec log-analyst-rag find /app -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+sudo docker compose -f docker-compose-rag.yml restart log-analyst-rag
+```
+
+---
+
+### GPU not being used — inference is very slow
+
+```bash
+# Check the runtime
+sudo docker inspect ollama | grep -i runtime
+# Should show: "Runtime": "nvidia"
+
+# If not, reconfigure and restart
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+sudo docker compose -f docker-compose-rag.yml restart ollama
+```
+
+---
 
 ### Out of memory / OOM killed
 
 ```bash
 # Check available memory
 free -h
+nvidia-smi
 
-# Switch to a smaller model in .env.rag
+# Switch to a smaller model in agent/.env.rag
 MODEL_NAME=llama3.2:3b
 ```
 
-### Open WebUI shows "No models available"
-
-```bash
-# Verify the agent API is healthy
-curl http://localhost:7000/v1/models
-
-# Restart Open WebUI
-docker compose -f docker-compose-rag.yml restart open-webui
-```
+---
 
 ### RAG returns no context
 
 ```bash
 # Re-run the indexer
-docker exec log-analyst-rag python rag_indexer.py
+sudo docker exec log-analyst-rag python rag_indexer.py
 
 # Check the knowledge-base index in OpenSearch
 curl https://<opensearch-endpoint>/knowledge-base/_count
 ```
 
-### View all logs at once
+---
 
-```bash
-docker compose -f docker-compose-rag.yml logs --tail=50
-```
+## 📦 Reference
+
+| Resource | Value |
+|---|---|
+| ECR image | `235856440647.dkr.ecr.us-gov-west-1.amazonaws.com/cnap-log-analyst-rag:v3` |
+| AMI | `ami-0a6d2fcf26f229fe1` (v3 — drivers and Docker pre-installed, skip C1–C4) |
+| S3 archive | `s3://cnap-dev-il6-ollama-knowledge-base-wgl/deployments/` |
+| Log analyst host | `10.40.0.90` (private, accessed via bastion) |
 
 ---
 
@@ -477,4 +585,4 @@ make test         # Run analysis on example logs
 ---
 
 *For architecture details, see [log-analyst-agent/ARCHITECTURE.md](./log-analyst-agent/ARCHITECTURE.md).*
-*For cost and RAG implementation details, see [log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md](./log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md).*
+*For optimization suggestions, see [IMPROVEMENTS.md](./IMPROVEMENTS.md).*

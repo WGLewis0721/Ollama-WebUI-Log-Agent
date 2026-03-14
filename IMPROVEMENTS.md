@@ -639,18 +639,84 @@ aws s3api put-bucket-intelligent-tiering-configuration \
 
 ---
 
+## 9. Known Issues & Near-Term Fixes
+
+These issues are confirmed in the v3 deployment and should be addressed before v4.
+
+### 9.1 AppGate Logs Return 0 Results from DSL Queries
+
+**Issue**: `appgate-logs-*` fields differ from `cwl-*` (which uses Palo Alto ECS mappings). The current `query_generator.py` system prompt only documents `cwl-*` field names, so generated DSL queries always return 0 hits against `appgate-logs-*`.
+
+**Fix**:
+1. Run a field mapping discovery query against `appgate-logs-*`:
+   ```bash
+   curl -s https://<endpoint>/appgate-logs-*/_mapping | python3 -m json.tool | grep '"type"' | sort -u
+   ```
+2. Add AppGate field names to `SYSTEM_PROMPT` in `query_generator.py` under a separate section
+3. Add a query routing rule: if the question mentions "AppGate", "SDP", or "session", use AppGate field names
+
+### 9.2 Time-Aware Prompting (Year Hallucination)
+
+**Issue**: The LLM occasionally hallucinates timestamps outside the Feb 2026 log window. The current workaround is `match_all` (no time filter), which prevents filtering but fixes result counts.
+
+**Fix**: Inject the actual log date range into every prompt:
+```python
+LOG_DATE_RANGE = "2026-02-02 to 2026-03-13"
+
+system_prompt = f"""
+...
+IMPORTANT: All logs in this system are from {LOG_DATE_RANGE}.
+When asked about "today", "recent", or "last week", refer to this date range.
+Do NOT use date range filters in queries — use match_all for time.
+"""
+```
+
+### 9.3 Knowledge Base Is Thin (~10 Chunks)
+
+**Issue**: The RAG knowledge base has very few indexed documents, so Report Mode answers lack CNAP-specific SOC context and fall back to generic analysis.
+
+**Fix**:
+1. Collect CNAP-specific runbooks, incident response playbooks, and escalation procedures
+2. Place them in `knowledge-base/runbooks/` as `.md` files
+3. Re-run the indexer:
+   ```bash
+   sudo docker exec log-analyst-rag python document_indexer.py
+   ```
+4. Verify chunk count: `curl https://<endpoint>/knowledge-base/_count`
+
+### 9.4 Intent Classification Is Keyword-Based
+
+**Issue**: Mode routing in `api_server.py` uses a keyword check (`is_specific_question()` in `query_generator.py`) which can misroute ambiguous questions.
+
+**Fix**: Replace keyword matching with a lightweight classifier using the fast `llama3.2:3b` model at `temperature=0`:
+```python
+ROUTING_PROMPT = """Classify this analyst question as either "query" or "report".
+"query" = specific fact-seeking (top IPs, specific rule, count of events)
+"report" = broad summary or analysis request
+
+Return ONLY the word: query or report
+
+Question: {question}"""
+```
+
+---
+
 ## Summary Priority Matrix
 
 | Improvement | Impact | Effort | Priority |
 |-------------|--------|--------|----------|
 | Remove secrets from git history | 🔴 Critical | Low | **P0** |
+| AppGate field mapping fix | 🔴 High | Low | **P1** |
 | Non-root Docker user | 🔴 High | Low | **P1** |
 | Async OpenSearch queries | 🟠 High | Medium | **P1** |
 | Remove backup files from repo | 🟡 Medium | Low | **P1** |
+| Expand knowledge base (runbooks) | 🟠 High | Low | **P1** |
+| Time-aware prompting | 🟠 High | Low | **P2** |
 | Structured logging | 🟡 Medium | Low | **P2** |
 | Retry logic with backoff | 🟠 High | Low | **P2** |
 | Unit tests | 🟡 Medium | Medium | **P2** |
-| CI/CD pipeline | 🟡 Medium | Medium | **P2** |
+| Intent classifier (replace keyword) | 🟡 Medium | Low | **P2** |
+| CI/CD pipeline | 🟡 Medium | Medium | **P3** |
 | Streaming LLM responses | 🟡 Medium | Medium | **P3** |
 | Multi-turn conversation | 🟢 Nice | High | **P3** |
 | Terraform infrastructure | 🟢 Nice | High | **P4** |
