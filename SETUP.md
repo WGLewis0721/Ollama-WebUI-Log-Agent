@@ -1,6 +1,6 @@
 # 🍳 Setup Guide
 
-> **What you're building:** An AI-powered SOC log analysis platform on a GPU instance in AWS GovCloud IL6.
+> **What you're building:** An AI-powered SOC log analysis platform on a GPU instance in air-gapped AWS GovCloud.
 > By the end you'll have 4 Docker containers running, Ollama serving local LLMs on a Tesla T4, and analysts
 > querying Palo Alto firewall logs in plain English.
 
@@ -20,12 +20,12 @@ All three paths converge at **[Final Steps](#-final-steps--configure-and-start)*
 
 Before you start, confirm you have everything:
 
-- [ ] Access to the bastion host (`i-0fc82dadfd4532970`)
-- [ ] `IL6-Zero-Trust-Key.pem` on your local machine
-- [ ] A `g4dn.xlarge` EC2 instance running **Ubuntu 22.04** in `vpc-0b571ce44509fdf19`
-- [ ] IAM role `LogAnalystEC2Role` attached to the instance
+- [ ] Access to the bastion host (`<your-bastion-id>`)
+- [ ] `<your-key.pem>` on your local machine
+- [ ] A `g4dn.xlarge` EC2 instance running **Ubuntu 22.04** in `<your-vpc-id>`
+- [ ] IAM role `<your-iam-role>` attached to the instance
 - [ ] The OpenSearch VPC endpoint URL (get from your team lead or AWS console)
-- [ ] GitLab access (Path C only)
+- [ ] GitHub/repository access (Path C only)
 
 ---
 
@@ -35,12 +35,12 @@ The log analyst host has no public IP. You must always go through the bastion.
 
 **On your local machine — connect to the bastion:**
 ```bash
-ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem ec2-user@<bastion-public-ip>
+ssh -i ~/.ssh/<your-key.pem> ec2-user@<bastion-public-ip>
 ```
 
 **On the bastion — hop to the log analyst host:**
 ```bash
-ssh -i IL6-Zero-Trust-Key.pem ubuntu@10.40.0.90
+ssh -i <your-key.pem> ubuntu@<your-private-ip>
 ```
 
 > 💡 Open two terminal tabs before you start — one on the bastion for AWS CLI commands,
@@ -78,9 +78,9 @@ newgrp docker
 ### A2 — Pull the Image from ECR
 
 ```bash
-AWS_ACCOUNT=235856440647
+AWS_ACCOUNT=<your-aws-account-id>
 AWS_REGION=us-gov-west-1
-ECR_REPO=cnap-log-analyst-rag
+ECR_REPO=log-analyst-rag
 
 # Log in to ECR
 aws ecr get-login-password --region $AWS_REGION | \
@@ -105,8 +105,8 @@ sudo docker tag \
 
 ```bash
 cd ~
-git clone https://gitlab.cce.af.mil/cloudone-operations-and-support/c1-ops-and-sustainment/cnap/engineering/il6-pioneers/ollama-openwebui-agent-wgl.git
-cd ollama-openwebui-agent-wgl/log-analyst-agent
+git clone https://github.com/<your-username>/<your-repo>
+cd <your-repo>/log-analyst-agent
 ```
 
 ➡️ **Continue to [Final Steps](#-final-steps--configure-and-start)**
@@ -141,7 +141,7 @@ newgrp docker
 ```bash
 cd ~
 aws s3 cp \
-  s3://cnap-dev-il6-ollama-knowledge-base-wgl/deployments/log-analyst-agent-v3-20260313-003705.zip \
+  s3://<your-s3-bucket>/deployments/<your-deployment-archive>.zip \
   ./log-analyst-agent-v3.zip \
   --region us-gov-west-1
 
@@ -161,7 +161,7 @@ sudo docker load < log-analyst-agent-log-analyst-rag.tar.gz
 > ⚠️ If the tar is not included in the ZIP, pull it from S3 directly:
 > ```bash
 > aws s3 cp \
->   s3://cnap-dev-il6-ollama-knowledge-base-wgl/ecr-transfer/log-analyst-rag-v3.tar.gz \
+>   s3://<your-s3-bucket>/ecr-transfer/log-analyst-rag-v3.tar.gz \
 >   - | gunzip | sudo docker load
 > ```
 
@@ -173,7 +173,7 @@ sudo docker load < log-analyst-agent-log-analyst-rag.tar.gz
 
 ## 🔧 Path C — Build from Scratch
 
-Use this only on a completely bare Ubuntu 22.04 instance. The v3 AMI (`ami-0a6d2fcf26f229fe1`)
+Use this only on a completely bare Ubuntu 22.04 instance. The v3 AMI (`<your-ami-id>`)
 already has Steps C1–C4 complete — if using it, jump straight to [C5](#c5--clone-the-repository).
 
 ---
@@ -266,8 +266,8 @@ pip3 install fastapi uvicorn flask langchain
 
 ```bash
 cd ~
-git clone https://gitlab.cce.af.mil/cloudone-operations-and-support/c1-ops-and-sustainment/cnap/engineering/il6-pioneers/ollama-openwebui-agent-wgl.git
-cd ollama-openwebui-agent-wgl/log-analyst-agent
+git clone https://github.com/<your-username>/<your-repo>
+cd <your-repo>/log-analyst-agent
 ```
 
 ✅ **Done when:** `ls` shows `docker-compose-rag.yml` and the `agent/` directory.
@@ -322,7 +322,7 @@ RAG_K=3
 RAG_INDEX=knowledge-base
 
 # ← REQUIRED: your S3 knowledge base bucket
-S3_KNOWLEDGE_BASE_BUCKET=cnap-dev-il6-ollama-knowledge-base-wgl
+S3_KNOWLEDGE_BASE_BUCKET=<your-s3-bucket>
 
 # Set high so historical logs are not filtered out by time
 TIME_RANGE_MINUTES=99999
@@ -440,10 +440,10 @@ Open a tunnel from your **local machine** to access the interfaces in your brows
 
 ```bash
 # Run this on YOUR LOCAL MACHINE
-ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem \
-  -L 8080:10.40.0.90:8080 \
-  -L 5000:10.40.0.90:5000 \
-  -L 7000:10.40.0.90:7000 \
+ssh -i ~/.ssh/<your-key.pem> \
+  -L 8080:<your-private-ip>:8080 \
+  -L 5000:<your-private-ip>:5000 \
+  -L 7000:<your-private-ip>:7000 \
   ec2-user@<bastion-public-ip> \
   -N
 ```
@@ -535,9 +535,8 @@ sudo docker compose -f docker-compose-rag.yml restart ollama
 ## 📦 Reference
 
 ```
-ECR image:  235856440647.dkr.ecr.us-gov-west-1.amazonaws.com/cnap-log-analyst-rag:v3
-AMI:        ami-0a6d2fcf26f229fe1  (v3 — drivers and Docker pre-installed, skip C1–C4)
-S3 archive: s3://cnap-dev-il6-ollama-knowledge-base-wgl/deployments/
-GitLab:     https://gitlab.cce.af.mil/cloudone-operations-and-support/c1-ops-and-sustainment/
-              cnap/engineering/il6-pioneers/ollama-openwebui-agent-wgl
+ECR image:  <your-account-id>.dkr.ecr.us-gov-west-1.amazonaws.com/log-analyst-rag:v3
+AMI:        <your-ami-id>  (v3 — drivers and Docker pre-installed, skip C1–C4)
+S3 archive: s3://<your-s3-bucket>/deployments/
+GitHub:     https://github.com/<your-username>/<your-repo>
 ```
