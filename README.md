@@ -247,6 +247,9 @@ Ollama-WebUI-Log-Agent/
     │   ├── s3_document_fetcher.py     ← Fetch runbooks from S3
     │   ├── document_indexer.py        ← Document chunking and embedding pipeline
     │   ├── dashboard.py               ← Flask report history UI (port 5000)
+    │   ├── main_opensearch.py         ← Standalone OpenSearch-enabled agent
+    │   ├── main.py                    ← Original file-based agent
+    │   ├── AGENT_MODULES.md           ← 📖 Module reference for all Python files
     │   ├── requirements.txt
     │   └── templates/dashboard.html
     ├── knowledge-base/
@@ -288,6 +291,7 @@ Ollama-WebUI-Log-Agent/
 | [log-analyst-agent/QUICKREF.md](./log-analyst-agent/QUICKREF.md) | Quick reference for daily operations |
 | [log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md](./log-analyst-agent/RAG_COST_EFFECTIVE_GUIDE.md) | RAG implementation cost analysis |
 | [log-analyst-agent/OPENSEARCH_COMPLETE_GUIDE.md](./log-analyst-agent/OPENSEARCH_COMPLETE_GUIDE.md) | OpenSearch integration guide |
+| [log-analyst-agent/agent/AGENT_MODULES.md](./log-analyst-agent/agent/AGENT_MODULES.md) | Reference for every Python module in the `agent/` folder |
 
 ---
 
