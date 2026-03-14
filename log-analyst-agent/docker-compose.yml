@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    # Uncomment if you have GPU on EC2 (g4dn, p3, etc.)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  log-analyst:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: log-analyst
+    ports:
+      - "5000:5000"
+    command: ["python","dashboard.py"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs:ro  # Mount your log files here (read-only)
+      - ./output:/app/output  # Analysis results output
+      - ./config:/app/config  # Configuration files
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MODEL_NAME=llama3.2:3b
+      - LOG_LEVEL=INFO
+      - WATCH_MODE=false  # Set to true for continuous monitoring
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

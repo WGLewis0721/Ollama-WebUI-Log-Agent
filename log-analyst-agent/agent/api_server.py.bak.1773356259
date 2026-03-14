@@ -1,0 +1,27 @@
+from fastapi import FastAPI, Request
+import time
+import uvicorn
+from main_rag import get_opensearch_client, fetch_logs, retrieve_rag_context, analyze_logs
+
+app = FastAPI()
+
+@app.get("/v1/models")
+async def list_models():
+    return {"object": "list", "data": [{"id": "log-analyst-rag", "object": "model"}]}
+
+@app.post("/v1/chat/completions")
+async def chat(request: Request):
+    body = await request.json()
+    query = body["messages"][-1]["content"] if "messages" in body else "Analyze logs"
+    
+    client = get_opensearch_client()
+    logs = fetch_logs(client, "cwl-*", 60)
+    context = retrieve_rag_context(client, logs)
+    answer = analyze_logs(logs, context)
+    
+    return {
+        "choices": [{"message": {"role": "assistant", "content": answer}}]
+    }
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=7000)

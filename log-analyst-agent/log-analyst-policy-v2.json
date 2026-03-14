@@ -1,0 +1,22 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttpGet", "es:ESHttpPost", "es:ESHttpHead", "es:ESHttpPut",
+                "es:DescribeElasticsearchDomain",
+                "es:DescribeDomain"
+            ],
+            "Resource": "arn:aws-us-gov:es:us-gov-west-1:235856440647:domain/dev-c-dev-cnap-il6-opensear/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:ListBucket"],
+            "Resource": [
+                "arn:aws-us-gov:s3:::cnap-dev-il6-ollama-knowledge-base-wgl",
+                "arn:aws-us-gov:s3:::cnap-dev-il6-ollama-knowledge-base-wgl/*"
+            ]
+        }
+    ]
+}

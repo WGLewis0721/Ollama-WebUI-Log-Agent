@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""
+Log Analyst Dashboard - Web UI for viewing analysis reports
+"""
+
+from flask import Flask, render_template, jsonify, send_file, request
+from flask_cors import CORS
+from pathlib import Path
+import json
+from datetime import datetime
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/app/output'))
+
+@app.route('/')
+def index():
+    """Main dashboard page"""
+    return render_template('dashboard.html')
+
+@app.route('/api/reports')
+def get_reports():
+    """Get list of all analysis reports"""
+    reports = []
+    
+    # Find all JSON reports
+    for json_file in sorted(OUTPUT_DIR.glob('analysis_*.json'), reverse=True):
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+            
+            # Find corresponding text file
+            txt_file = json_file.with_suffix('.txt')
+            
+            reports.append({
+                'id': json_file.stem,
+                'filename': json_file.name,
+                'timestamp': data.get('timestamp', 'Unknown'),
+                'analysis_type': data.get('analysis_type', 'general'),
+                'model': data.get('model', 'Unknown'),
+                'log_lines': data.get('log_lines', 0),
+                'has_error': 'error' in data,
+                'metadata': data.get('metadata', {}),
+                'txt_file': txt_file.name if txt_file.exists() else None
+            })
+        except Exception as e:
+            print(f"Error reading {json_file}: {e}")
+    
+    return jsonify(reports)
+
+@app.route('/api/report/<report_id>')
+def get_report(report_id):
+    """Get full report details"""
+    json_file = OUTPUT_DIR / f"{report_id}.json"
+    
+    if not json_file.exists():
+        return jsonify({'error': 'Report not found'}), 404
+    
+    try:
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/report/<report_id>/download')
+def download_report(report_id):
+    """Download report as text file"""
+    txt_file = OUTPUT_DIR / f"{report_id}.txt"
+    
+    if not txt_file.exists():
+        return jsonify({'error': 'Report not found'}), 404
+    
+    return send_file(txt_file, as_attachment=True)
+
+@app.route('/api/stats')
+def get_stats():
+    """Get dashboard statistics"""
+    total_reports = len(list(OUTPUT_DIR.glob('analysis_*.json')))
+    
+    # Count by analysis type
+    by_type = {}
+    recent_errors = 0
+    
+    for json_file in OUTPUT_DIR.glob('analysis_*.json'):
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+            
+            analysis_type = data.get('analysis_type', 'unknown')
+            by_type[analysis_type] = by_type.get(analysis_type, 0) + 1
+            
+            if 'error' in data:
+                recent_errors += 1
+        except:
+            pass
+    
+    return jsonify({
+        'total_reports': total_reports,
+        'by_type': by_type,
+        'recent_errors': recent_errors
+    })
+
+@app.route('/api/latest')
+def get_latest():
+    """Get the most recent analysis report"""
+    json_files = sorted(OUTPUT_DIR.glob('analysis_*.json'), reverse=True)
+    
+    if not json_files:
+        return jsonify({'error': 'No reports found'}), 404
+    
+    try:
+        with open(json_files[0], 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
+
+if __name__ == '__main__':
+    # Create output directory if it doesn't exist
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Run the app
+    port = int(os.getenv('DASHBOARD_PORT', '5000'))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+def classify_log_source(report: dict) -> str:
+    analysis = (report.get("analysis") or "").lower()
+
+    appgate_terms = [
+        "appgate",
+        "sdp",
+        "controller",
+        "entitlement",
+        "gateway",
+        "connection timeout"
+    ]
+
+    palo_terms = [
+        "palo alto",
+        "pan-os",
+        "panorama",
+        "panw",
+        "firewall",
+        "threat",
+        "denied traffic",
+        "session end"
+    ]
+
+    if any(term in analysis for term in appgate_terms):
+        return "appgate"
+
+    if any(term in analysis for term in palo_terms):
+        return "paloalto"
+
+    return "general"

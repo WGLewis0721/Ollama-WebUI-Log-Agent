@@ -1,0 +1,143 @@
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PHASE 3 — RAG VALIDATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Goal: prove docs are uploaded, chunked, indexed, retrievable, and used in output
+  Time: ~3-5 minutes (includes one live analysis with RAG)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.1 · S3 KNOWLEDGE BASE — what docs are uploaded
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  knowledge-base/runbooks/README.md                                0 KB  2026-02-11
+  knowledge-base/runbooks/database-troubleshooting.md              1 KB  2026-02-11
+  Total: 2 file(s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.2 · OPENSEARCH knowledge-base — chunk count and content
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ Connected to OpenSearch: vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+  Total chunks indexed: 4
+  ✅ PASS: 4 chunks in knowledge-base index
+
+  Sample chunks:
+    source     : knowledge-base/runbooks/README.md                 
+    chunk_index: 0
+    text[:120] : # test runbook
+
+    source     : knowledge-base/runbooks/database-troubleshooting.md
+    chunk_index: 0
+    text[:120] : # Database Connection Troubleshooting
+
+## Symptoms
+- "Connection refused" errors
+- "Too many connections" errors
+- Timeo
+
+    source     : knowledge-base/runbooks/database-troubleshooting.md
+    chunk_index: 1
+    text[:120] : ty-groups --group-ids sg-YOUR_GROUP_ID
+```
+
+### 2. Check Connection Pool
+```bash
+# Review application logs for pool stat
+
+    source     : knowledge-base/runbooks/database-troubleshooting.md
+    chunk_index: 2
+    text[:120] : Check AWS Secrets Manager for correct credentials
+- Verify IAM database authentication if using it
+
+## Prevention
+- Set
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.3 · EMBEDDING MODEL — nomic-embed-text available in Ollama
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Models available: ['llama3.1:8b', 'nomic-embed-text:latest', 'llama3.2:3b']
+  ✅ PASS: nomic-embed-text is loaded
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.4 · kNN RETRIEVAL — simulate RAG search with real log sample
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ Connected to OpenSearch: vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+✓ Fetched 10 logs from cwl-*
+  Query built from 10 real logs
+  Query preview: Feb  5 17:08:40 il6-dev-cnap-fw01 - 1,2026/02/05 17:08:39,,TRAFFIC,end,3073,2026/02/05 17:08:39,10.4 Feb  5 17:08:20 il6-dev-cnap-fw01 - 1,2026/02/05 
+
+✓ RAG Manager initialized
+   OpenSearch: vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+   Embedding Model: nomic-embed-text
+   Index: knowledge-base
+  Chunks retrieved (min_score=0.0): 3
+  ✅ PASS: RAG retrieval working
+
+  [1] source : database-troubleshooting.md
+      score  : 0.0030
+      text   : Check AWS Secrets Manager for correct credentials
+- Verify IAM database authentication if using it
+
+## Prevention
+- Set up CloudWatch alarms for connection count
+- Configure connection pool properly (
+
+  [2] source : database-troubleshooting.md
+      score  : 0.0029
+      text   : ty-groups --group-ids sg-YOUR_GROUP_ID
+```
+
+### 2. Check Connection Pool
+```bash
+# Review application logs for pool stats
+kubectl logs deployment/api-service | grep "HikariPool"
+
+# Restart to reset po
+
+  [3] source : database-troubleshooting.md
+      score  : 0.0029
+      text   : # Database Connection Troubleshooting
+
+## Symptoms
+- "Connection refused" errors
+- "Too many connections" errors
+- Timeouts on database queries
+
+## Common Causes
+1. Security group misconfiguration
+2.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.5 · END-TO-END — prove RAG context is injected into analysis output
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Sending request to /v1/chat/completions and checking for RAG usage...
+  (This takes 30-60 seconds)
+
+  ❌ FAIL: Could not parse response: Invalid control character at: line 1 column 139 (char 138)
+  Raw: {"object":"chat.completion","model":"log-analyst-rag","choices":[{"index":0,"message":{"role":"assistant","content":"**Executive Summary**
+=======================
+
+This report summarizes network activity from February 5, 2023. Analysis reveals several trends and anomalies that require attention.
+
+**
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3.6 · INDEXER — re-run if chunk count is low
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Current chunk count: ✓ Connected to OpenSearch: vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+4
+  ✅ PASS: ✓ Connected to OpenSearch: vpc-dev-c-dev-cnap-il6-opensear-gsubaunjbfw3i6w2gnjfv4g6w4.us-gov-west-1.es.amazonaws.com
+4 chunks present — sufficient for RAG
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PHASE 3 SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Check the PASS/FAIL/WARN lines above.
+
+  If RAG used = False:
+    1. Upload .md/.txt runbooks to S3 knowledge-base/ prefix
+    2. Run: sudo docker compose -f docker-compose-rag.yml --profile tools run --rm indexer
+    3. Re-run this script
+
+  If all PASS → proceed to Phase 4 (OpenWebUI validation)
+

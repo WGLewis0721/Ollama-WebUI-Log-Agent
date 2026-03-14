@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Analyst Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f7fa;
+            color: #2c3e50;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            margin-top: 0.5rem;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stat-card h3 {
+            font-size: 0.875rem;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #2d3748;
+        }
+        
+        .reports-section {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .section-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .section-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: background 0.2s;
+        }
+        
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+        
+        .reports-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .report-card {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .report-card:hover {
+            background: #f7fafc;
+        }
+        
+        .report-card:last-child {
+            border-bottom: none;
+        }
+        
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        
+        .report-title {
+            font-weight: 600;
+            font-size: 1rem;
+            color: #2d3748;
+        }
+        
+        .report-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .badge-general { background: #bee3f8; color: #2c5282; }
+        .badge-security { background: #feb2b2; color: #742a2a; }
+        .badge-performance { background: #fbd38d; color: #744210; }
+        .badge-errors { background: #fc8181; color: #742a2a; }
+        
+        .report-meta {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.875rem;
+            color: #718096;
+        }
+        
+        .report-meta span {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            padding: 2rem;
+        }
+        
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            max-width: 900px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+        }
+        
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 10;
+        }
+        
+        .modal-header h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #718096;
+        }
+        
+        .modal-body {
+            padding: 1.5rem;
+        }
+        
+        .analysis-content {
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            background: #f7fafc;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+        }
+        
+        .download-btn {
+            background: #48bb78;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #718096;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #718096;
+        }
+        
+        .empty-state svg {
+            width: 100px;
+            height: 100px;
+            margin-bottom: 1rem;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 Log Analyst Dashboard</h1>
+        <p>AI-powered log analysis reports from your production environment</p>
+    </div>
+    
+    <div class="container">
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <h3>Total Reports</h3>
+                <div class="value" id="totalReports">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>General Analysis</h3>
+                <div class="value" id="generalCount">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Security Audits</h3>
+                <div class="value" id="securityCount">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Performance Reviews</h3>
+                <div class="value" id="performanceCount">-</div>
+            </div>
+        </div>
+        
+        <div class="reports-section">
+            <div class="section-header">
+                <h2>Analysis Reports</h2>
+<div class="filters">
+  <button class="filter-btn active" id="filterAll" onclick="setFilter('all')">All Logs</button>
+  <button class="filter-btn" id="filterAppgate" onclick="setFilter('appgate')">AppGate</button>
+  <button class="filter-btn" id="filterPalo" onclick="setFilter('paloalto')">Palo Alto</button>
+</div>
+                <button class="refresh-btn" onclick="loadReports()">🔄 Refresh</button>
+            </div>
+            <div class="reports-list" id="reportsList">
+                <div class="loading">Loading reports...</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal" id="reportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Report Details</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+let allReports = [];
+let currentFilter = 'all';
+
+function getFilteredReports() {
+  if (currentFilter === 'all') return allReports;
+  return allReports.filter(r => r.log_source === currentFilter);
+}
+
+function setFilter(filter) {
+  currentFilter = filter;
+  ['filterAll','filterAppgate','filterPalo'].forEach(id => document.getElementById(id)?.classList.remove('active'));
+  if (filter === 'all') filterAll.classList.add('active');
+  if (filter === 'appgate') filterAppgate.classList.add('active');
+  if (filter === 'paloalto') filterPalo.classList.add('active');
+  renderReports(getFilteredReports());
+}
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                document.getElementById('totalReports').textContent = stats.total_reports;
+                document.getElementById('generalCount').textContent = stats.by_type.general || 0;
+                document.getElementById('securityCount').textContent = stats.by_type.security || 0;
+                document.getElementById('performanceCount').textContent = stats.by_type.performance || 0;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function loadReports() {
+            const list = document.getElementById('reportsList');
+            list.innerHTML = '<div class="loading">Loading reports...</div>';
+            
+            try {
+                const response = await fetch('/api/reports');
+                const reports = await response.json();
+                
+                if (reports.length === 0) {
+                    list.innerHTML = `
+                        <div class="empty-state">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <h3>No reports yet</h3>
+                            <p>Analysis reports will appear here once generated</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                list.innerHTML = reports.map(report => `
+                    <div class="report-card" onclick="viewReport('${report.id}')">
+                        <div class="report-header">
+                            <div class="report-title">${report.filename}</div>
+                            <div class="report-badge badge-${report.analysis_type}">${report.analysis_type}</div>
+                        </div>
+                        <div class="report-meta">
+                            <span>📅 ${new Date(report.timestamp).toLocaleString()}</span>
+                            <span>🤖 ${report.model}</span>
+                            <span>📊 ${report.log_lines} lines</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                list.innerHTML = `<div class="empty-state"><p>Error loading reports: ${error.message}</p></div>`;
+            }
+        }
+        
+        async function viewReport(reportId) {
+            const modal = document.getElementById('reportModal');
+            const modalBody = document.getElementById('modalBody');
+            const modalTitle = document.getElementById('modalTitle');
+            
+            modal.classList.add('active');
+            modalBody.innerHTML = '<div class="loading">Loading report...</div>';
+            
+            try {
+                const response = await fetch(`/api/report/${reportId}`);
+                const report = await response.json();
+                
+                modalTitle.textContent = `Analysis Report - ${new Date(report.timestamp).toLocaleString()}`;
+                
+                let metadataHtml = '';
+                if (report.metadata && Object.keys(report.metadata).length > 0) {
+                    metadataHtml = '<h3>Metadata</h3><ul>';
+                    for (const [key, value] of Object.entries(report.metadata)) {
+                        metadataHtml += `<li><strong>${key}:</strong> ${JSON.stringify(value)}</li>`;
+                    }
+                    metadataHtml += '</ul>';
+                }
+                
+                modalBody.innerHTML = `
+                    <div>
+                        <p><strong>Model:</strong> ${report.model}</p>
+                        <p><strong>Analysis Type:</strong> ${report.analysis_type}</p>
+                        <p><strong>Log Lines:</strong> ${report.log_lines}</p>
+                        ${metadataHtml}
+                    </div>
+                    <div class="analysis-content">${report.analysis}</div>
+                    <button class="download-btn" onclick="downloadReport('${reportId}')">⬇️ Download Report</button>
+                `;
+            } catch (error) {
+                modalBody.innerHTML = `<p style="color: red;">Error loading report: ${error.message}</p>`;
+            }
+        }
+        
+        function downloadReport(reportId) {
+            window.location.href = `/api/report/${reportId}/download`;
+        }
+        
+        function closeModal() {
+            document.getElementById('reportModal').classList.remove('active');
+        }
+        
+        // Close modal on outside click
+        document.getElementById('reportModal').addEventListener('click', (e) => {
+            if (e.target.id === 'reportModal') {
+                closeModal();
+            }
+        });
+        
+        // Load data on page load
+        window.addEventListener('load', () => {
+            loadStats();
+            loadReports();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadStats();
+                loadReports();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>

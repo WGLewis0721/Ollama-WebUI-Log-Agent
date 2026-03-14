@@ -1,0 +1,98 @@
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PHASE 4 — OpenWebUI Fix + Validation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Goal: Route OpenWebUI through agent API (port 7000) not raw Ollama (11434)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.1 · Backing up docker-compose-rag.yml
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ Backup saved
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.2 · Writing updated docker-compose-rag.yml
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ docker-compose-rag.yml updated
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.3 · Restarting open-webui with new config
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⏳ Waiting 15s for OpenWebUI to reinitialize...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.4 · Verifying OpenWebUI environment
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Checking OPENAI_API_BASE_URL inside container:
+  OPENAI_API_BASE_URL=http://log-analyst-rag:7000/v1
+  OLLAMA_BASE_URL=
+  ✅ PASS: OpenWebUI is pointed at agent port 7000
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.5 · Connectivity — can open-webui reach the agent API?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅ PASS: Agent reachable from open-webui. Models: ['log-analyst-rag']
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.6 · End-to-end — simulate OpenWebUI chat request through agent
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Sending OpenAI-format request to agent (same format OpenWebUI uses)...
+  Expect: 30-60 second response with RAG used = True
+
+  Log count : 315
+  RAG used  : True
+  Model     : llama3.1:8b
+  Length    : 3164 chars
+
+  ✅ PASS: RAG context injected — OpenWebUI gets full agent analysis
+
+  Response preview (first 800 chars):
+  **Executive Summary**
+  ======================
+  
+  This report summarizes security-related events and findings from log data collected from multiple sources. The analysis reveals a mix of benign traffic patterns, potential security issues, and areas for improvement in network configuration.
+  
+  **Critical Issues (if any)**
+  -----------------------------
+  
+  * **Potential Denial-of-Service (DoS)**: IP address `10.40.2.246` has been involved in frequent outgoing connections to multiple destinations within a short timeframe, which may indicate a DoS attack or malicious activity.
+  * **Unusual Firewall Rule Hits**: Palo Alto firewall rule hits reveal that the `Trust-to-Untrust-Allow` rule is being triggered extensively across various IP addresses and destination ports.
+  
+  **AppGate SDP Analysis**
+  ------------
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  4.7 · All containers status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NAME                    IMAGE                               COMMAND                  SERVICE           CREATED          STATUS                    PORTS
+log-analyst-dashboard   log-analyst-agent-dashboard         "python dashboard.py"    dashboard         2 weeks ago      Up 2 weeks                0.0.0.0:5000->5000/tcp, [::]:5000->5000/tcp
+log-analyst-rag         log-analyst-agent-log-analyst-rag   "python -u api_serve…"   log-analyst-rag   7 minutes ago    Up 6 minutes              0.0.0.0:7000->7000/tcp, [::]:7000->7000/tcp
+ollama                  ollama/ollama:0.15.5                "/bin/ollama serve"      ollama            2 weeks ago      Up 2 weeks (healthy)      0.0.0.0:11434->11434/tcp, [::]:11434->11434/tcp
+open-webui              log-analyst-agent-open-webui        "bash start.sh"          open-webui        46 seconds ago   Up 41 seconds (healthy)   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PHASE 4 SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Request flow after this fix:
+  
+  User types in OpenWebUI (8080)
+       ↓
+  OpenWebUI sends POST /v1/chat/completions
+       ↓
+  log-analyst-rag API server (7000)
+       ↓  ↓  ↓
+  OpenSearch   RAG chunks   Ollama llama3.1:8b
+       ↓
+  Structured security analysis returned to OpenWebUI
+  
+  To access OpenWebUI:
+    SSM port forward:  --parameters '{"portNumber":["8080"],"localPortNumber":["8080"]}'
+    Then open:         http://localhost:8080
+  
+  Post-Fix Steps in UI:
+    - Go to Settings → Models/Connections
+    - Ensure 'log-analyst-rag' appears (from agent /v1/models)
+    - Select it as default
+    - Test query: "Analyze the last 30 minutes of security logs."
+      (Expect: Logs referenced, RAG used: True in response/agent logs)
+
+  If all checks passed → Proceed to Phase 5 (deployment guide + GitLab)

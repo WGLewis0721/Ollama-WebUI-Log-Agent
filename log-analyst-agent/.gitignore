@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Docker
+.env
+
+# Log files
+logs/*.log
+!logs/.gitkeep
+
+# Output files
+output/*
+!output/.gitkeep
+
+# Config files (if sensitive)
+config/*.yml
+config/*.yaml
+!config/example.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
