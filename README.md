@@ -72,6 +72,7 @@ The agent fetches a representative log sample, applies runbook context from the 
 ---
 
 ## Architecture
+## Architecture at a Glance
 
 ```
 Analyst
@@ -148,6 +149,7 @@ OpenSearch  (VPC endpoint)  — Live cwl-*, appgate-logs-*, security-logs-* indi
 | Parameter | Value |
 |---|---|
 | Instance type | `g4dn.xlarge` — Tesla T4, 15360 MiB VRAM |
+| Instance | `g4dn.xlarge` — Tesla T4, 15360 MiB VRAM |
 | OS | Ubuntu 22.04 LTS |
 | Region | `us-gov-west-1` (AWS GovCloud West) |
 | IAM Role | `LogAnalystEC2Role` |
@@ -184,6 +186,7 @@ ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem \
 | API (Swagger) | http://localhost:7000/docs | Raw API and health check |
 
 For a fresh install or restore from the ZIP archive, see **[SETUP_GUIDE.md](./SETUP_GUIDE.md)**.
+For a fresh install, see **[SETUP.md](./SETUP.md)**.
 
 ---
 
@@ -286,6 +289,34 @@ Ollama-WebUI-Log-Agent/
 
 ---
 
+log-analyst-agent/
+├── docker-compose-rag.yml          ← Start here — runs the full stack
+├── .env.example                    ← Copy to agent/.env.rag and fill in values
+├── .env.opensearch.example
+├── SETUP.md                        ← Full from-scratch setup guide
+├── README.md                       ← This file
+├── Makefile
+├── agent/
+│   ├── Dockerfile
+│   ├── api_server.py               ← FastAPI dual-mode router
+│   ├── main_rag.py                 ← RAG pipeline + /api/chat
+│   ├── query_generator.py          ← llama3.2:3b → OpenSearch DSL
+│   ├── opensearch_executor.py      ← Executes DSL, formats results
+│   ├── opensearch_integration.py   ← AWS4Auth OpenSearch client
+│   ├── rag_module.py               ← kNN embeddings (nomic-embed-text)
+│   ├── dashboard.py                ← Flask report history UI
+│   ├── document_indexer.py         ← S3 runbooks → knowledge-base index
+│   ├── requirements.txt
+│   └── templates/
+│       └── dashboard.html
+├── knowledge-base/
+│   └── runbooks/                   ← Drop .md runbooks here, then re-index
+├── config/
+└── misc/                           ← Dev artifacts — not needed for deployment
+```
+
+---
+
 ## Known Limitations
 
 | Issue | Status |
@@ -293,6 +324,12 @@ Ollama-WebUI-Log-Agent/
 | `appgate-logs-*` DSL queries return 0 results | Under investigation — field mapping differs from `cwl-*` |
 | Log dataset is from Feb 2026 | `match_all` used — no time filter — queries still return results |
 | Knowledge base is thin (~10 chunks) | Re-index with CNAP-specific runbooks from S3 |
+
+---
+
+## Security Notes
+
+Do not commit real `.env` or `.env.rag` files, AWS credentials, session tokens, internal hostnames, VPC endpoint URLs, or raw output files from `/output`. Commit only sanitized templates: `.env.example`, `.env.opensearch.example`.
 
 ---
 
