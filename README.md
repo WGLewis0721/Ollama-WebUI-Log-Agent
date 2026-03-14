@@ -1,12 +1,14 @@
-# 🤖 CNAP AI Log Analyst
+# 🤖 AI Log Analyst — RAG + Text-to-Query for OpenSearch
 
-**Ask questions about your network in plain English. Get answers backed by real data.**
+> A self-hosted SOC analyst assistant for querying security logs in plain English.
+> Runs entirely on a local GPU — no external API calls, no data leaves the network.
+> Built for air-gapped AWS GovCloud environments.
 
 ---
 
 ## The Problem This Solves
 
-Every day the CNAP IL6 environment generates tens of thousands of Palo Alto firewall and AppGate SDP log events. When something looks suspicious — or leadership asks a question — analysts currently have two options:
+Every day the AWS GovCloud environment generates tens of thousands of Palo Alto firewall and AppGate SDP log events. When something looks suspicious — or leadership asks a question — analysts currently have two options:
 
 1. **Manually search OpenSearch Dashboards** — requires knowing DSL query syntax, slow, easy to make mistakes
 2. **Wait for a scheduled report** — delayed, generic, not tailored to the specific question being asked
@@ -34,9 +36,9 @@ No DSL knowledge required. No waiting for reports. Every answer is traceable bac
 
 ## Why This Matters for Zero Trust
 
-This platform is a **force multiplier for the AppGate SDP zero-trust architecture** already running in the IL6 environment.
-
-Zero trust means every connection is logged, validated, and auditable. But that value is only realized if someone can actually interrogate those logs quickly. This system closes that gap:
+This tool is designed to augment network security operations in environments where
+Zero Trust principles are enforced at the network layer — identity-based
+micro-segmentation, least-privilege access, and continuous verification.
 
 | Zero Trust Principle | How This Helps |
 |---|---|
@@ -89,7 +91,7 @@ Ollama  (:11434)            — Local GPU inference on Tesla T4 (no data leaves 
 OpenSearch  (VPC endpoint)  — Live cwl-*, appgate-logs-*, security-logs-* indices
 ```
 
-**All inference runs locally.** Ollama runs on a Tesla T4 GPU inside the IL6 VPC. No data is sent to any external API.
+**All inference runs locally.** Ollama runs on a Tesla T4 GPU inside the air-gapped VPC. No data is sent to any external API.
 
 ---
 
@@ -152,10 +154,10 @@ OpenSearch  (VPC endpoint)  — Live cwl-*, appgate-logs-*, security-logs-* indi
 | Instance | `g4dn.xlarge` — Tesla T4, 15360 MiB VRAM |
 | OS | Ubuntu 22.04 LTS |
 | Region | `us-gov-west-1` (AWS GovCloud West) |
-| IAM Role | `LogAnalystEC2Role` |
-| ECR Image | `235856440647.dkr.ecr.us-gov-west-1.amazonaws.com/cnap-log-analyst-rag:v3` |
-| AMI (v3 snapshot) | `ami-0a6d2fcf26f229fe1` |
-| Access | Private subnet — via bastion `10.110.6.37` |
+| IAM Role | `<your-iam-role>` |
+| ECR Image | `<your-account-id>.dkr.ecr.us-gov-west-1.amazonaws.com/log-analyst-rag:v3` |
+| AMI (v3 snapshot) | `<your-ami-id> (snapshot of working state)` |
+| Access | Private subnet — no public IP — access via bastion or SSM |
 
 ---
 
@@ -172,10 +174,10 @@ sudo docker compose -f docker-compose-rag.yml ps
 Access via SSH tunnel from your local machine:
 
 ```bash
-ssh -i ~/.ssh/IL6-Zero-Trust-Key.pem \
-  -L 8080:10.40.0.90:8080 \
-  -L 5000:10.40.0.90:5000 \
-  -L 7000:10.40.0.90:7000 \
+ssh -i ~/.ssh/<your-key.pem> \
+  -L 8080:<your-private-ip>:8080 \
+  -L 5000:<your-private-ip>:5000 \
+  -L 7000:<your-private-ip>:7000 \
   ec2-user@<bastion-public-ip> -N
 ```
 
@@ -323,7 +325,7 @@ log-analyst-agent/
 |---|---|
 | `appgate-logs-*` DSL queries return 0 results | Under investigation — field mapping differs from `cwl-*` |
 | Log dataset is from Feb 2026 | `match_all` used — no time filter — queries still return results |
-| Knowledge base is thin (~10 chunks) | Re-index with CNAP-specific runbooks from S3 |
+| Knowledge base is thin (~10 chunks) | Re-index with environment-specific runbooks from S3 |
 
 ---
 
@@ -339,7 +341,7 @@ Do not commit real `.env` or `.env.rag` files, AWS credentials, session tokens, 
 - [ ] Time-aware prompting (eliminate year hallucination)
 - [ ] Intent classifier to replace keyword-based mode routing
 - [ ] Stronger DSL query guardrails (cap size, validate sort fields)
-- [ ] Expanded CNAP runbook coverage in knowledge base
+- [ ] Expanded runbook coverage in knowledge base
 - [ ] Multi-step investigation workflows
 
 ---
@@ -350,4 +352,4 @@ Do not commit real `.env` or `.env.rag` files, AWS credentials, session tokens, 
 
 ---
 
-Built by the CNAP Engineering team — Cloud One Operations, SAIC / Gunter AFB
+*All inference runs locally on a GPU inside the VPC. No data leaves the network.*
